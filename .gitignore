@@ -1,0 +1,14 @@
+# build output
+/myapp
+
+# local TLS certs (key.pem is private; regenerate with mkcert — see README)
+/certs/
+
+# copy of the mkcert root CA, kept locally for setting up new devices
+/mkcert-rootCA.crt
+
+# macOS
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json

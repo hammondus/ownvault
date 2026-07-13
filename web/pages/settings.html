@@ -1,0 +1,23 @@
+<section class="screen">
+  <h1>Settings</h1>
+  <p>A sample settings screen.</p>
+  <div class="card">
+    <label class="setting-row">
+      <span>Enable notifications</span>
+      <input type="checkbox" checked>
+    </label>
+    <label class="setting-row">
+      <span>Dark mode</span>
+      <input type="checkbox">
+    </label>
+    <label class="setting-row">
+      <span>Colour scheme</span>
+      <!-- app.js sets the current value on swap-in and applies changes -->
+      <select id="scheme-select">
+        <option value="midnight">Midnight navy</option>
+        <option value="classic">Classic blue</option>
+      </select>
+    </label>
+    <button id="reset-btn" class="btn" type="button">Reset menu button position</button>
+  </div>
+</section>

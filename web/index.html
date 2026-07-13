@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>My App</title>
+  <meta name="theme-color" content="#0a1f3b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/style.css">
+  <!-- If the back button hits a page htmx has no snapshot for, do a real
+       reload so the shell re-initialises cleanly. -->
+  <meta name="htmx-config" content='{"refreshOnHistoryMiss":true}'>
+</head>
+<body>
+
+  <!-- Fixed top bar: stays in place while the screen content scrolls -->
+  <header class="app-header">
+    <h1>My App</h1>
+  </header>
+
+  <!-- Overlay shown behind the nav when it is open -->
+  <div id="overlay" class="overlay"></div>
+
+  <!-- Left navigation drawer. hx-target/hx-swap are inherited by every link:
+       each menu item fetches its fragment into <main> and updates the URL.
+       The plain href is the no-JS / no-htmx fallback (the Go server returns
+       this shell for any app route). -->
+  <nav id="nav" class="nav" aria-label="Main navigation">
+    <div class="nav-header">Menu</div>
+    <ul class="nav-list" hx-target="#main" hx-swap="innerHTML show:window:top">
+      <li><a class="nav-link" href="/"          hx-get="/pages/home.html"      hx-push-url="/"          data-title="Home">🏠 Home</a></li>
+      <li><a class="nav-link" href="/dashboard" hx-get="/pages/dashboard.html" hx-push-url="/dashboard" data-title="Dashboard">📊 Dashboard</a></li>
+      <li><a class="nav-link" href="/profile"   hx-get="/pages/profile.html"   hx-push-url="/profile"   data-title="Profile">👤 Profile</a></li>
+      <li><a class="nav-link" href="/settings"  hx-get="/pages/settings.html"  hx-push-url="/settings"  data-title="Settings">⚙️ Settings</a></li>
+      <li><a class="nav-link" href="/about"     hx-get="/pages/about.html"     hx-push-url="/about"     data-title="About">ℹ️ About</a></li>
+    </ul>
+  </nav>
+
+  <!-- Draggable hamburger button -->
+  <button id="menu-btn" class="menu-btn" aria-label="Open menu" aria-expanded="false" aria-controls="nav">
+    <span class="menu-btn-bar"></span>
+    <span class="menu-btn-bar"></span>
+    <span class="menu-btn-bar"></span>
+  </button>
+
+  <!-- Screen content is swapped in here. hx-history-elt makes htmx snapshot
+       and restore this element for back/forward navigation. -->
+  <main id="main" hx-history-elt></main>
+
+  <!-- Brief status messages (e.g. failed navigation while offline) -->
+  <div id="toast" class="toast" role="status"></div>
+
+  <!-- Shown (via body.offline) only while there is no connection -->
+  <div class="offline-ribbon" role="status">Offline</div>
+
+  <script src="/js/htmx.min.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

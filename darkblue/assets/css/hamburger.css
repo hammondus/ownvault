@@ -1,0 +1,153 @@
+
+
+.slide-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 260px;
+  max-width: 75vw;
+  height: 100vh;
+  background: #ffffff;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.12);
+  transform: translateX(-100%);
+  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.4, 1);
+  z-index: 1000;
+  padding: 2rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(10, 31, 59, 0.08);
+}
+
+.slide-menu.open {
+  transform: translateX(0);
+}
+
+.menu-header {
+  margin-bottom: 2rem;
+}
+
+.menu-header h3 {
+  color: #0a1f3b;
+  font-weight: 500;
+  border-bottom: 2px solid #0a1f3b20;
+  padding-bottom: 0.75rem;
+}
+
+.menu-items {
+  list-style: none;
+}
+
+.menu-items li {
+  margin-bottom: 1.2rem;
+}
+
+.menu-items a {
+  text-decoration: none;
+  color: #1a2b4c;
+  font-weight: 480;
+  font-size: 1.2rem;
+  display: block;
+  padding: 0.3rem 0;
+  transition: color 0.1s;
+}
+
+.menu-items a:hover {
+  color: #0a1f3b;
+}
+
+.menu-footer {
+  margin-top: auto;
+  font-size: 0.8rem;
+  opacity: 0.6;
+  padding-top: 1rem;
+}
+
+.menu-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(3px);
+  z-index: 999;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.2s,
+    visibility 0.2s;
+}
+
+.menu-overlay.active {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* 
+    Hamburger
+    FAB
+*/
+.hamburger-fab {
+  position: fixed;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #0a1f3b;
+  box-shadow:
+    0 10px 20px rgba(10, 31, 59, 0.25),
+    0 3px 6px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  z-index: 1100;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  transition:
+    box-shadow 0.15s,
+    background 0.1s;
+  will-change: left, top;
+  left: 20px;
+  bottom: 80px;
+}
+
+/* How the hamburger looks while being dragged */
+.hamburger-fab:active {
+  cursor: grabbing;
+  box-shadow: 0 16px 28px rgba(10, 31, 59, 0.35);
+  background: #14365c;
+  opacity: 0.8;
+}
+
+/* The three lines horizonal lines that make up the hamburger button */
+.hamburger-icon {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 28px;
+  height: 22px;
+  pointer-events: none;
+}
+.hamburger-icon span {
+  display: block;
+  width: 100%;
+  height: 3px;
+  background: white;
+  border-radius: 4px;
+  transition: 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* Change the hamburger horizontal lines to a cross when menu is active */
+.hamburger-fab.menu-open .hamburger-icon span:nth-child(1) {
+  transform: translateY(9px) rotate(45deg);
+}
+.hamburger-fab.menu-open .hamburger-icon span:nth-child(2) {
+  opacity: 0;
+}
+.hamburger-fab.menu-open .hamburger-icon span:nth-child(3) {
+  transform: translateY(-9px) rotate(-45deg);
+}
+
+/* Need to play with this more. It only does stuff on touch screens. It removes the visual cue that something has been tapped*/
+.hamburger-fab {
+  -webkit-tap-highlight-color: transparent;
+}

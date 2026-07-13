@@ -1,0 +1,324 @@
+:root {
+  --nav-width: 260px;
+  --nav-bg: #1f2733;
+  --nav-fg: #e8edf2;
+  --accent: #4d9fff;
+  --page-bg: #f4f6f8;
+  --page-fg: #22292f;
+  --card-bg: #ffffff;
+  --btn-size: 56px;
+  /* Top bar navy (default "midnight" scheme); the manifest theme_color and
+     the SCHEMES map in app.js must agree with these scheme colors */
+  --bar-bg: #0a1f3b;
+  --menu-btn-bg: var(--bar-bg);
+  --bar-height: 52px;
+}
+
+/* "Classic" scheme: the original logo navy bar + accent-blue hamburger.
+   app.js stamps this class from the saved setting and keeps the
+   <meta name="theme-color"> in sync. */
+body.theme-classic {
+  --bar-bg: #1a4080;
+  --menu-btn-bg: var(--accent);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--page-bg);
+  color: var(--page-fg);
+  /* Avoid horizontal scroll while the nav is off-canvas */
+  overflow-x: hidden;
+}
+
+/* ---------- Top bar ---------- */
+
+.app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Extend behind the iOS status bar / notch area */
+  height: calc(var(--bar-height) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 20px 0;
+  display: flex;
+  align-items: center;
+  background: var(--bar-bg);
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+  /* Below the overlay (800) and nav drawer (900) so both cover it */
+  z-index: 700;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* ---------- Screens ---------- */
+
+main {
+  padding: 24px;
+  /* Clear the fixed top bar */
+  padding-top: calc(var(--bar-height) + env(safe-area-inset-top) + 24px);
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* htmx adds .htmx-added to freshly swapped-in content for the settle
+   window, then removes it — so each screen fades in as it arrives. */
+.screen {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.screen.htmx-added {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.card {
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.card h2 {
+  margin: 0 0 4px;
+  font-size: 1.8rem;
+}
+
+.card p {
+  margin: 4px 0;
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid #e3e7ea;
+}
+
+.btn {
+  margin-top: 14px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.btn:active {
+  filter: brightness(0.9);
+}
+
+/* ---------- Nav drawer ---------- */
+
+.nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--nav-width);
+  max-width: 85vw;
+  background: var(--nav-bg);
+  color: var(--nav-fg);
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  z-index: 900;
+  padding-top: env(safe-area-inset-top);
+  overflow-y: auto;
+}
+
+.nav.open {
+  transform: translateX(0);
+  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.35);
+}
+
+.nav-header {
+  padding: 20px;
+  font-size: 1.2rem;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0;
+}
+
+.nav-link {
+  display: block;
+  padding: 14px 20px;
+  color: var(--nav-fg);
+  text-decoration: none;
+  font-size: 1rem;
+}
+
+.nav-link:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.nav-link.active {
+  background: rgba(77, 159, 255, 0.18);
+  border-left: 3px solid var(--accent);
+  padding-left: 17px;
+}
+
+/* ---------- Overlay ---------- */
+
+/* visibility transitions discretely: it flips to hidden only after the
+   fade-out finishes, so the overlay stays dark the whole time it's open
+   and still doesn't block clicks when closed. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 800;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s ease, visibility 0.25s;
+}
+
+.overlay.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* ---------- Toast ---------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  transform: translateX(-50%) translateY(8px);
+  background: rgba(31, 39, 51, 0.95);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  max-width: 90vw;
+  text-align: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s;
+  z-index: 1100;
+}
+
+.toast.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%);
+}
+
+/* ---------- Offline ribbon ---------- */
+
+/* Hidden (slid below the viewport) when online; body.offline reveals it.
+   The modern pattern: online shows nothing, only trouble is announced. */
+.offline-ribbon {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #b45309;
+  color: #fff;
+  font-size: 0.7rem;
+  line-height: 1;
+  text-align: center;
+  /* The full safe-area inset (34px on Face ID iPhones) triples the ribbon's
+     height; the text only needs ~18px to clear the home indicator, so pad by
+     inset minus 16px and let the indicator overlap the ribbon's dead space. */
+  padding: 3px 12px max(3px, calc(env(safe-area-inset-bottom) - 16px));
+  transform: translateY(100%);
+  transition: transform 0.3s ease;
+  z-index: 1050;
+}
+
+body.offline .offline-ribbon {
+  transform: translateY(0);
+}
+
+/* Keep toasts clear of the ribbon while it is showing */
+body.offline .toast {
+  bottom: calc(34px + max(0px, env(safe-area-inset-bottom) - 16px));
+}
+
+/* ---------- Hamburger button ---------- */
+
+.menu-btn {
+  position: fixed;
+  /* Default position (just below the top bar); overridden from JS with a
+     saved position */
+  top: calc(var(--bar-height) + env(safe-area-inset-top) + 12px);
+  left: 16px;
+  width: var(--btn-size);
+  height: var(--btn-size);
+  border: none;
+  border-radius: 50%;
+  background: var(--menu-btn-bg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  cursor: grab;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  /* We handle all gestures ourselves */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  opacity: .7;
+}
+
+.menu-btn.dragging {
+  cursor: grabbing;
+  transform: scale(1.08);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+.menu-btn-bar {
+  width: 22px;
+  height: 3px;
+  border-radius: 2px;
+  background: #fff;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+  pointer-events: none;
+}
+
+/* Hamburger -> X when the nav is open */
+.menu-btn[aria-expanded="true"] .menu-btn-bar:nth-child(1) {
+  transform: translateY(8px) rotate(45deg);
+}
+
+/* scaleX(0) as well as opacity: iOS Safari can leave the antialiased end
+   pixels of the rounded bar visible when it is only faded out. */
+.menu-btn[aria-expanded="true"] .menu-btn-bar:nth-child(2) {
+  opacity: 0;
+  transform: scaleX(0);
+}
+
+.menu-btn[aria-expanded="true"] .menu-btn-bar:nth-child(3) {
+  transform: translateY(-8px) rotate(-45deg);
+}
