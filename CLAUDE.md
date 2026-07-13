@@ -57,6 +57,15 @@ server can see the number of entries and their update times (never contents).
   user clearing cache), so the UI reminds the user not to stay offline too
   long, and encrypted export/import to a file must work fully offline.
   Export/import ships first, before sync.
+- **Restore semantics (merge, backup wins)**: importing a backup replaces the
+  local vault, then — if sync is on — the backup becomes authoritative on the
+  server too. Imported entries are flagged `restored`; the next sync rebases
+  them onto the server's current revs and pushes, so the backup overwrites
+  matching server entries and revives ones it had deleted, while entries that
+  exist only on the server are kept (a merge, not a mirror). It never raises
+  conflicts. The imported wrapped-key record only seeds an empty server; an
+  existing server meta wins (so restoring the same vault won't revert a
+  password changed on another device).
 
 ## Go server
 

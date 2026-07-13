@@ -730,11 +730,16 @@
     if (e.target.id !== "import-file") return;
     var file = e.target.files && e.target.files[0];
     if (!file) return;
-    if (
-      !window.confirm(
-        "Importing replaces the current vault with the backup's contents. Continue?"
-      )
-    ) {
+    var warn =
+      "Restore this backup?\n\nIt replaces this device's vault with the backup's contents.";
+    if (!window.Sync || Sync.isEnabled()) {
+      warn +=
+        " Because sync is on, the backup's entries also overwrite the matching " +
+        "ones on the server and your other devices (entries that exist only on " +
+        "the server are kept).";
+    }
+    warn += "\n\nThis can't be undone. Continue?";
+    if (!window.confirm(warn)) {
       e.target.value = "";
       return;
     }

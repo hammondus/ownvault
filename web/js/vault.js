@@ -468,9 +468,19 @@ window.Vault = (function () {
     });
   }
 
-  // Restore a backup: replaces the whole vault (meta + entries) with the
+  // Restore a backup: replaces the whole local vault (meta + entries) with the
   // file's contents. After import, unlock with the password that made the
   // export. Locks the current session so stale keys aren't reused.
+  //
+  // Sync interaction (merge, backup wins): imported entries are marked
+  // `restored` + `dirty` and the cursor is reset to 0, so the next sync pulls
+  // the server's current state, rebases each restored entry onto the server's
+  // rev (see applyPulled) and pushes it — the backup overwrites matching
+  // server entries and revives ones it had deleted, while entries that exist
+  // only on the server are kept (they arrive via the same pull). The imported
+  // wrapped-key record is marked dirty too, but the pull-first ordering lets an
+  // existing server meta win, so a restore of the same vault never reverts a
+  // password change made elsewhere; only an empty server gets seeded from it.
   function importVault(text) {
     var doc;
     try {
@@ -486,7 +496,9 @@ window.Vault = (function () {
       salt: b64decode(doc.meta.salt),
       iterations: doc.meta.iterations,
       wrapIv: b64decode(doc.meta.wrapIv),
-      wrapped: b64decode(doc.meta.wrapped)
+      wrapped: b64decode(doc.meta.wrapped),
+      rev: 0,
+      dirty: true
     };
     var envs = (doc.entries || []).map(function (e) {
       return {
@@ -494,10 +506,18 @@ window.Vault = (function () {
         iv: e.iv ? b64decode(e.iv) : null,
         ciphertext: e.ciphertext ? b64decode(e.ciphertext) : null,
         updatedAt: e.updatedAt,
-        deleted: !!e.deleted
+        deleted: !!e.deleted,
+        rev: 0,
+        dirty: true,
+        restored: true, // authoritative: wins over the server on next sync
+        conflict: false,
+        remote: null
       };
     });
     lock();
+    // Full reconcile next sync: forget the cursor so the pull returns the whole
+    // server state to rebase against and to pick up server-only entries.
+    setCursor(0);
     return openDB().then(function (d) {
       return new Promise(function (resolve, reject) {
         var t = d.transaction([STORE_META, STORE_ENTRIES], "readwrite");
@@ -597,6 +617,7 @@ window.Vault = (function () {
             env.dirty = false;
             env.conflict = false;
             env.remote = null;
+            env.restored = false;
           } else if (res.status === "conflict") {
             env.conflict = true;
             env.remote = res.server || null;
@@ -631,6 +652,13 @@ window.Vault = (function () {
           upd.conflict = false;
           upd.remote = null;
           return entryPutRaw(upd);
+        }
+        // Authoritative restore: adopt the server's rev as our base and keep
+        // the backup's value, so the follow-up push is accepted and the backup
+        // wins — no conflict is raised.
+        if (local.restored) {
+          local.rev = dto.rev || 0;
+          return entryPutRaw(local);
         }
         // local is a pending local edit
         if ((dto.rev || 0) === (local.rev || 0)) return Promise.resolve();
