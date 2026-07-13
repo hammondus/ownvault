@@ -203,15 +203,27 @@ window.Sync = (function () {
 
   // Fresh-device bootstrap: pull meta + entries before there is a local vault,
   // so the lock gate can offer "unlock" instead of "create". Resolves to
-  // whether a vault now exists locally.
+  // { exists, needsAuth }:
+  //   exists    - a vault is now present locally (meta pulled, or already here)
+  //   needsAuth - the server refused for lack of a valid token, so the lock
+  //               gate should prompt for one before deciding create vs unlock
   function bootstrap() {
-    if (!isEnabled()) return Vault.isInitialized();
+    if (!isEnabled()) {
+      return Vault.isInitialized().then(function (ex) {
+        return { exists: ex, needsAuth: false };
+      });
+    }
     return pull().then(
       function () {
-        return Vault.isInitialized();
+        return Vault.isInitialized().then(function (ex) {
+          return { exists: ex, needsAuth: false };
+        });
       },
-      function () {
-        return Vault.isInitialized();
+      function (err) {
+        var auth = !!(err && err.auth);
+        return Vault.isInitialized().then(function (ex) {
+          return { exists: ex, needsAuth: auth && !ex };
+        });
       }
     );
   }

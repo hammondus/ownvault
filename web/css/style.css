@@ -399,6 +399,19 @@ body.locked {
   font-size: 0.85rem;
 }
 
+.lock-link {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 4px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* ---------- Passwords screen ---------- */
 
 .pw-toolbar {

@@ -67,15 +67,18 @@
     show(byId("lock-screen"), true);
     show(byId("create-form"), mode === "create");
     show(byId("unlock-form"), mode === "unlock");
+    show(byId("token-form"), mode === "token");
     show(byId("create-error"), false);
     show(byId("unlock-error"), false);
-    var focus = byId(mode === "create" ? "create-pw" : "unlock-pw");
+    show(byId("token-error"), false);
+    ["create-pw", "create-pw2", "unlock-pw", "token-input"].forEach(function (id) {
+      var f = byId(id);
+      if (f) f.value = "";
+    });
+    var focusId =
+      mode === "create" ? "create-pw" : mode === "token" ? "token-input" : "unlock-pw";
+    var focus = byId(focusId);
     if (focus) {
-      focus.value = "";
-      var other = byId("create-pw2");
-      if (other) other.value = "";
-      var up = byId("unlock-pw");
-      if (up) up.value = "";
       setTimeout(function () {
         focus.focus();
       }, 50);
@@ -94,11 +97,37 @@
         return;
       }
       // Fresh device: try to pull an existing vault (meta + entries) from the
-      // server so we can offer "unlock" instead of "create".
+      // server so we can offer "unlock" instead of "create". If the server
+      // requires a token we don't have yet, prompt for it first.
       if (window.Sync && Sync.isEnabled()) {
-        Sync.bootstrap().then(function (nowExists) {
-          showLock(nowExists ? "unlock" : "create");
+        Sync.bootstrap().then(function (res) {
+          if (res.exists) showLock("unlock");
+          else if (res.needsAuth) showLock("token");
+          else showLock("create");
         });
+      } else {
+        showLock("create");
+      }
+    });
+  }
+
+  // Fresh device joining a token-protected server: store the token, then
+  // re-bootstrap. Success routes to unlock (vault found) or create (server
+  // authenticated but empty); a rejected token stays on this step.
+  function handleToken(e) {
+    e.preventDefault();
+    var err = byId("token-error");
+    if (!window.Sync) {
+      showLock("create");
+      return;
+    }
+    Sync.setToken(byId("token-input").value.trim());
+    Sync.bootstrap().then(function (res) {
+      if (res.exists) {
+        showLock("unlock");
+      } else if (res.needsAuth) {
+        err.textContent = "That token was rejected. Check it and try again.";
+        show(err, true);
       } else {
         showLock("create");
       }
@@ -632,6 +661,13 @@
   // Lock overlay forms (persistent chrome).
   byId("create-form").addEventListener("submit", handleCreate);
   byId("unlock-form").addEventListener("submit", handleUnlock);
+  byId("token-form").addEventListener("submit", handleToken);
+  byId("token-offline").addEventListener("click", function () {
+    // Give up on joining the server and make a local-only vault. Disable sync
+    // so we can't later clobber the server's vault with an unconditional push.
+    if (window.Sync) Sync.setEnabled(false);
+    showLock("create");
+  });
 
   /* ==================== settings-screen controls ==================== */
   // These live in the swapped-in Settings fragment, so bind via delegation.

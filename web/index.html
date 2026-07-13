@@ -77,6 +77,17 @@
         <p id="unlock-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Unlock</button>
       </form>
+      <!-- Shown on a fresh device when the sync server requires a token before
+           it will hand over the vault (see vaultui.js startGate). -->
+      <form id="token-form" class="lock-form" hidden>
+        <p class="lock-lead">This sync server needs an access token before it
+          will share your vault. Enter it to continue.</p>
+        <input id="token-input" class="lock-input" type="password"
+               placeholder="Access token" autocomplete="off">
+        <p id="token-error" class="lock-error" hidden></p>
+        <button class="btn lock-btn" type="submit">Continue</button>
+        <button id="token-offline" class="lock-link" type="button">Set up a new offline vault instead</button>
+      </form>
     </div>
   </div>
 
