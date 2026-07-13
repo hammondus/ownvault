@@ -65,7 +65,12 @@ server can see the number of entries and their update times (never contents).
   exist only on the server are kept (a merge, not a mirror). It never raises
   conflicts. The imported wrapped-key record only seeds an empty server; an
   existing server meta wins (so restoring the same vault won't revert a
-  password changed on another device).
+  password changed on another device). A v2 backup file also records the
+  (non-secret) Vault ID; import adopts it (`Sync.setVaultId`) so the restored
+  device reattaches to the same server namespace instead of forking a new one,
+  and the rebase above runs against that vault's live state. Restore is
+  reachable from the lock gate too ("Restore from a backup file"), so a fresh
+  device with no vault can recover before there is anything to unlock.
 
 ## Go server
 
@@ -165,6 +170,24 @@ to sync through.
 It uses such little resources than many people can share a server on a very
 low powered machine.
 
+**Multi-tenancy — the Vault ID.** Sharing works via a per-vault namespace key.
+Each vault mints a random **Vault ID** at creation (client-side, kept in
+localStorage as `vaultId`); the client sends it as `X-Vault-Id` on every
+`/api/*` call, and the server scopes *all* storage by it — `entries` and `meta`
+are keyed by `vault_id`, and each vault has its own private `rev` sequence in
+the `revs` table. So unrelated people on one server get fully separate vaults
+and can't see or enumerate each other's (already encrypted) data; the server
+still only ever sees an opaque id + ciphertext. There are deliberately **no
+usernames/accounts** — the Vault ID picks the blob, the master password opens
+it. `-token`, if set, is a separate server-wide access gate (not per-person).
+A fresh device joins an existing vault via the lock-screen **connect** step
+(enter the Vault ID + token); Settings shows the current Vault ID to copy over.
+SSE `changed` events are scoped per vault (`/events?vault=<id>`); the `/events`
+reachability probe in app.js connects unscoped and just rides the keepalives.
+The old single-vault schema (entries keyed by id alone, one `meta` row) is
+incompatible; `openStore` refuses such a DB with a clear message rather than
+migrating.
+
 
 
 # PWA Template
@@ -262,11 +285,13 @@ it would hang) and must keep doing so. The service worker also bypasses
   (`syncEnabled`, `syncToken`); URLs are same-origin.
 - `web/js/vaultui.js` is all the DOM glue (lock gate, list/search, record
   modal, conflict banner + resolution modal, settings controls).
-- `main.go` stores only ciphertext in SQLite, assigns a monotonic `rev` per
-  write, and on `/api/push` accepts an entry only if the server's current rev
-  still equals the client's `base` (else it returns the server's version as a
-  conflict). It broadcasts a `changed` SSE event after any accepted write.
-  Zero-knowledge holds: `rev` is the only server-managed metadata.
+- `main.go` stores only ciphertext in SQLite, scoped by the client's Vault ID
+  (see Public Use), assigns a per-vault monotonic `rev` per write, and on
+  `/api/push` accepts an entry only if the server's current rev still equals the
+  client's `base` (else it returns the server's version as a conflict). It
+  broadcasts a `changed` SSE event (to that vault's subscribers) after any
+  accepted write. Zero-knowledge holds: the server-managed metadata is `rev`
+  plus the opaque, client-supplied `vault_id`.
 
 ## Conventions
 
