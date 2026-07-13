@@ -101,13 +101,40 @@
       <!-- Shown once, right after a new vault is created: surface the Vault ID so
            the user can connect other devices to this same vault. -->
       <div id="welcome-panel" class="lock-form" hidden>
-        <p class="lock-lead">Your vault is ready. To sync another device to
-          <strong>this</strong> vault, connect it using the Vault ID below.</p>
-        <input id="welcome-vault-id" class="lock-input lock-vaultid" type="text"
-               readonly aria-label="Vault ID">
-        <button id="welcome-copy" class="btn btn-ghost lock-btn" type="button">Copy Vault ID</button>
-        <p class="lock-hint">You can always find it again in Settings → Sync. It
-          isn't a secret — your master password is what protects the vault.</p>
+        <!-- Sync vaults: surface the Vault ID for connecting other devices. -->
+        <div id="welcome-sync">
+          <p class="lock-lead">Your vault is ready. To sync another device to
+            <strong>this</strong> vault, connect it using the Vault ID below.</p>
+          <input id="welcome-vault-id" class="lock-input lock-vaultid" type="text"
+                 readonly aria-label="Vault ID">
+          <button id="welcome-copy" class="btn btn-ghost lock-btn" type="button">Copy Vault ID</button>
+          <p class="lock-hint">You can always find it again in Settings → Sync. It
+            isn't a secret — your master password is what protects the vault.</p>
+        </div>
+        <!-- Offline-only vaults get a plain lead in place of the sync block. -->
+        <p id="welcome-offline-lead" class="lock-lead" hidden>Your vault is ready.</p>
+        <!-- Install as a PWA. The browser's own install control is easy to miss,
+             so we offer it explicitly here. Shown only when installable and not
+             already installed; iOS Safari has no prompt API, so it gets manual
+             steps instead. vaultui.js updateInstallUI decides which to show. -->
+        <div id="welcome-install" class="install-block" hidden>
+          <p class="lock-install-heading">Install Own Vault as an app</p>
+          <button class="btn lock-btn install-btn" type="button" hidden>
+            Install app
+          </button>
+          <div class="install-ios lock-install-ios" hidden>
+            <p class="lock-hint">Add it to your Home Screen for full-screen,
+              offline access — in <strong>Safari</strong>:</p>
+            <ol class="lock-install-steps">
+              <li>Tap the <strong>Share</strong> button (the square with an
+                upward arrow).</li>
+              <li>Choose <strong>Add to Home Screen</strong>.</li>
+              <li>Tap <strong>Add</strong>.</li>
+            </ol>
+            <p class="lock-hint">Other iOS browsers can't install to the Home
+              Screen — open this page in Safari first.</p>
+          </div>
+        </div>
         <button id="welcome-continue" class="btn lock-btn" type="button">Continue</button>
       </div>
       <!-- Recovery on a fresh device: import an encrypted backup before there is

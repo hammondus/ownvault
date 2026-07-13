@@ -34,6 +34,87 @@
   var idleTimer = null;
   var clipTimer = null;
 
+  /* ==================== PWA install ==================== */
+  // Chromium fires beforeinstallprompt when the app is installable; we stash the
+  // event so the welcome step can offer an explicit "Install app" button (the
+  // browser's own control is easy to miss). iOS Safari has no such API, so it
+  // gets manual Add-to-Home-Screen steps instead. See updateInstallUI.
+  var deferredInstallPrompt = null;
+
+  function isStandalone() {
+    return (
+      (window.matchMedia &&
+        window.matchMedia("(display-mode: standalone)").matches) ||
+      window.navigator.standalone === true
+    );
+  }
+
+  function isIOS() {
+    var ua = window.navigator.userAgent || "";
+    // iPadOS 13+ presents as a Mac, so also treat a touch-capable "Macintosh"
+    // as iOS.
+    return (
+      /iPad|iPhone|iPod/.test(ua) ||
+      (/Macintosh/.test(ua) && window.navigator.maxTouchPoints > 1)
+    );
+  }
+
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault(); // keep the mini-infobar from showing; we drive it ourselves
+    deferredInstallPrompt = e;
+    updateInstallUI();
+  });
+
+  window.addEventListener("appinstalled", function () {
+    deferredInstallPrompt = null;
+    updateInstallUI();
+  });
+
+  // Decide what (if anything) each install area shows. Drives every
+  // `.install-block` on the page — the welcome step and the Settings card — so
+  // both stay in step. Each block holds an `.install-btn` (native prompt), an
+  // `.install-ios` (manual Add-to-Home-Screen steps), and optionally an
+  // `.install-done` (already-installed note). Called when a block appears
+  // (welcome step / Settings swap) and whenever install state changes.
+  function updateInstallUI() {
+    var blocks = document.querySelectorAll(".install-block");
+    var installed = isStandalone();
+    for (var i = 0; i < blocks.length; i++) {
+      var block = blocks[i];
+      var btn = block.querySelector(".install-btn");
+      var ios = block.querySelector(".install-ios");
+      var done = block.querySelector(".install-done");
+      var visible;
+      if (installed) {
+        // Already running as an installed app: only blocks with a "done" note
+        // (Settings) stay, to confirm it; the welcome block just disappears.
+        show(btn, false);
+        show(ios, false);
+        show(done, true);
+        visible = !!done;
+      } else if (deferredInstallPrompt) {
+        show(done, false);
+        show(ios, false);
+        show(btn, true);
+        visible = true;
+      } else if (isIOS()) {
+        show(done, false);
+        show(btn, false);
+        show(ios, true);
+        visible = true;
+      } else {
+        // Not installable (yet): the event may not have fired, or the browser
+        // can't install. Hide the block; it re-appears if the event arrives.
+        visible = false;
+      }
+      block.hidden = !visible;
+      // In Settings each block lives in its own card — hide the whole card when
+      // there's nothing to show. The welcome block isn't in a `.card`.
+      var card = block.closest(".card");
+      if (card) card.hidden = !visible;
+    }
+  }
+
   /* ==================== tiny DOM helper ==================== */
 
   function el(tag, attrs, children) {
@@ -73,10 +154,15 @@
     show(byId("unlock-error"), false);
     show(byId("connect-error"), false);
     show(byId("restore-msg"), false);
-    // The welcome step surfaces the freshly created vault's id.
+    // The welcome step surfaces the freshly created vault's id (sync vaults
+    // only) and offers to install the app.
     if (mode === "welcome") {
+      var syncing = !!(window.Sync && Sync.isEnabled());
+      show(byId("welcome-sync"), syncing);
+      show(byId("welcome-offline-lead"), !syncing);
       var wid = byId("welcome-vault-id");
-      if (wid) wid.value = window.Sync ? Sync.getVaultId() : "";
+      if (wid) wid.value = syncing ? Sync.getVaultId() : "";
+      updateInstallUI();
     }
     // Start the connect fields empty. The Vault ID must be the *other* device's
     // vault (copied from its Settings) — never this device's own local id, which
@@ -234,11 +320,10 @@
     // path that reaches create directly; the connect screen sets one already).
     if (window.Sync) Sync.ensureVaultId();
     Vault.create(pw).then(function () {
-      // Surface the Vault ID once, so the user can connect other devices. Skip
-      // it for offline-only vaults (no server to connect to yet); it's always in
-      // Settings later regardless.
-      if (window.Sync && Sync.isEnabled()) showLock("welcome");
-      else afterUnlock();
+      // Show the welcome step: it surfaces the Vault ID (sync vaults only, so
+      // other devices can connect — offline vaults have no server yet, and it's
+      // always in Settings later) and offers to install the app.
+      showLock("welcome");
     }, function () {
       err.textContent = "Couldn't create the vault.";
       show(err, true);
@@ -705,6 +790,7 @@
       var vid = byId("vault-id");
       if (vid) vid.value = Sync.getVaultId();
     }
+    updateInstallUI(); // reflect install state in the Settings install card
   }
 
   // Modal (persistent chrome) via delegation on the modal root.
@@ -771,6 +857,20 @@
   byId("welcome-continue").addEventListener("click", afterUnlock);
   byId("welcome-copy").addEventListener("click", function () {
     if (window.Sync) copyValue(Sync.getVaultId(), false);
+  });
+  // Install button (welcome step + Settings card) — delegated on body so the one
+  // handler covers both the persistent welcome chrome and the swapped-in
+  // Settings fragment.
+  document.body.addEventListener("click", function (e) {
+    if (!e.target.closest(".install-btn")) return;
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    // One-shot: the event can't be re-prompted, so drop it and re-render the UI
+    // regardless of whether the user accepted or dismissed.
+    deferredInstallPrompt.userChoice.then(function () {
+      deferredInstallPrompt = null;
+      updateInstallUI();
+    });
   });
 
   /* ==================== emergency recovery sheet ==================== */

@@ -419,6 +419,51 @@ body.locked {
   opacity: 0.65;
 }
 
+/* Welcome-step "Install the app" area: set off from the vault-id block above
+   by a hairline divider. */
+#welcome-install {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.lock-install-heading {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.lock-install-ios {
+  text-align: left;
+}
+
+.lock-install-steps {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.lock-install-steps li {
+  margin-bottom: 4px;
+}
+
+/* Settings install card: numbered Add-to-Home-Screen steps. */
+.install-steps {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+.install-steps li {
+  margin-bottom: 4px;
+}
+
+.install-done {
+  font-weight: 600;
+}
+
 .lock-link {
   display: block;
   width: 100%;

@@ -26,6 +26,34 @@
     </form>
   </div>
 
+  <!-- Install as a PWA. The browser's own install control is easy to miss, so
+       offer it here too (as well as on the welcome step). vaultui.js
+       updateInstallUI reveals this card only when there's something to show:
+       the button on installable browsers, manual steps on iOS, a confirmation
+       once installed. Starts hidden to avoid a flash before JS decides. -->
+  <div class="card" hidden>
+    <h2 class="card-title">Install app</h2>
+    <p class="card-note">Install Own Vault to your device for full-screen,
+      offline access and a home-screen icon.</p>
+    <div class="install-block">
+      <button class="btn install-btn" type="button" hidden>Install app</button>
+      <div class="install-ios" hidden>
+        <p class="card-note">On <strong>iOS</strong>, add it to your Home Screen
+          from <strong>Safari</strong>:</p>
+        <ol class="install-steps">
+          <li>Tap the <strong>Share</strong> button (the square with an upward
+            arrow).</li>
+          <li>Choose <strong>Add to Home Screen</strong>.</li>
+          <li>Tap <strong>Add</strong>.</li>
+        </ol>
+        <p class="card-note">Other iOS browsers can't install to the Home Screen
+          — open this page in Safari first.</p>
+      </div>
+      <p class="card-note install-done" hidden>✓ Own Vault is installed on this
+        device.</p>
+    </div>
+  </div>
+
   <div class="card">
     <h2 class="card-title">Sync</h2>
     <p class="card-note">Sync across devices through the Go server that served
