@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>My App</title>
+  <title>Own Vault</title>
   <meta name="theme-color" content="#0a1f3b">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -18,7 +18,7 @@
 
   <!-- Fixed top bar: stays in place while the screen content scrolls -->
   <header class="app-header">
-    <h1>My App</h1>
+    <h1>Own Vault</h1>
   </header>
 
   <!-- Overlay shown behind the nav when it is open -->
@@ -31,9 +31,7 @@
   <nav id="nav" class="nav" aria-label="Main navigation">
     <div class="nav-header">Menu</div>
     <ul class="nav-list" hx-target="#main" hx-swap="innerHTML show:window:top">
-      <li><a class="nav-link" href="/"          hx-get="/pages/home.html"      hx-push-url="/"          data-title="Home">🏠 Home</a></li>
-      <li><a class="nav-link" href="/dashboard" hx-get="/pages/dashboard.html" hx-push-url="/dashboard" data-title="Dashboard">📊 Dashboard</a></li>
-      <li><a class="nav-link" href="/profile"   hx-get="/pages/profile.html"   hx-push-url="/profile"   data-title="Profile">👤 Profile</a></li>
+      <li><a class="nav-link" href="/"          hx-get="/pages/passwords.html" hx-push-url="/"          data-title="Passwords">🔑 Passwords</a></li>
       <li><a class="nav-link" href="/settings"  hx-get="/pages/settings.html"  hx-push-url="/settings"  data-title="Settings">⚙️ Settings</a></li>
       <li><a class="nav-link" href="/about"     hx-get="/pages/about.html"     hx-push-url="/about"     data-title="About">ℹ️ About</a></li>
     </ul>
@@ -56,7 +54,41 @@
   <!-- Shown (via body.offline) only while there is no connection -->
   <div class="offline-ribbon" role="status">Offline</div>
 
+  <!-- Lock gate: covers the app until the vault is unlocked. vaultui.js shows
+       the create form on first run, otherwise the unlock form. -->
+  <div id="lock-screen" class="lock-screen" hidden>
+    <div class="lock-card">
+      <div class="lock-logo">🔐</div>
+      <h1 class="lock-title">Own Vault</h1>
+      <form id="create-form" class="lock-form" hidden>
+        <p class="lock-lead">Set a master password. It encrypts everything and
+          cannot be recovered — there is no reset.</p>
+        <input id="create-pw" class="lock-input" type="password"
+               placeholder="Master password" autocomplete="new-password">
+        <input id="create-pw2" class="lock-input" type="password"
+               placeholder="Confirm master password" autocomplete="new-password">
+        <p id="create-error" class="lock-error" hidden></p>
+        <button class="btn lock-btn" type="submit">Create vault</button>
+      </form>
+      <form id="unlock-form" class="lock-form" hidden>
+        <p class="lock-lead">Enter your master password to unlock.</p>
+        <input id="unlock-pw" class="lock-input" type="password"
+               placeholder="Master password" autocomplete="current-password">
+        <p id="unlock-error" class="lock-error" hidden></p>
+        <button class="btn lock-btn" type="submit">Unlock</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Record modal: view / add / edit, populated by vaultui.js -->
+  <div id="record-modal" class="modal" hidden>
+    <div class="modal-overlay" data-close="1"></div>
+    <div id="modal-card" class="modal-card" role="dialog" aria-modal="true"></div>
+  </div>
+
   <script src="/js/htmx.min.js"></script>
+  <script src="/js/vault.js"></script>
   <script src="/js/app.js"></script>
+  <script src="/js/vaultui.js"></script>
 </body>
 </html>

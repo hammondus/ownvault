@@ -1,0 +1,509 @@
+/*
+ * Own Vault — encrypted vault core.
+ *
+ * Deliberately DOM-free and self-contained: crypto, storage, and the entry
+ * CRUD/export/import live here so the same module can later back a browser
+ * extension as well as this PWA. UI glue lives in vaultui.js.
+ *
+ * Crypto model (see CLAUDE.md):
+ *   - A random AES-GCM "vault key" encrypts every entry individually.
+ *   - master password -> PBKDF2 -> "wrapping key", which encrypts only the
+ *     vault key. The wrapped-key record (wrapped vault key + salt + iters) is
+ *     the single unlock artifact; a wrong password is an AES-GCM auth failure
+ *     unwrapping it, so no password hash is stored.
+ *   - Changing the master password re-wraps the vault key (one small write),
+ *     never re-encrypts entries.
+ *
+ * Storage (IndexedDB):
+ *   - meta store: the wrapped-key record under key "vault".
+ *   - entries store: envelopes {id, iv, ciphertext, updatedAt, deleted}.
+ *     ciphertext decrypts to the payload {title, username, password, url,
+ *     notes, created, modified}. Deletes are tombstones (deleted=true, payload
+ *     dropped) so they can sync later.
+ */
+window.Vault = (function () {
+  "use strict";
+
+  var DB_NAME = "ownvault";
+  var DB_VERSION = 1;
+  var STORE_META = "meta";
+  var STORE_ENTRIES = "entries";
+  var META_KEY = "vault";
+
+  // PBKDF2-SHA256 work factor. High by design: the wrapped key is the only
+  // thing standing between an attacker with the ciphertext and the vault.
+  var PBKDF2_ITERATIONS = 600000;
+  var EXPORT_MAGIC = "ownvault.backup";
+  var EXPORT_VERSION = 1;
+
+  var subtle = window.crypto.subtle;
+
+  var db = null; // IDBDatabase, opened lazily
+  var vaultKey = null; // CryptoKey when unlocked, else null
+  var changeCb = null; // notified after any entry mutation
+
+  /* ==================== small helpers ==================== */
+
+  function randomBytes(n) {
+    return window.crypto.getRandomValues(new Uint8Array(n));
+  }
+
+  function utf8Encode(str) {
+    return new TextEncoder().encode(str);
+  }
+
+  function utf8Decode(buf) {
+    return new TextDecoder().decode(buf);
+  }
+
+  function toU8(buf) {
+    return buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  }
+
+  // base64 only for the export file (JSON can't carry binary); IndexedDB
+  // stores the Uint8Arrays directly via structured clone.
+  function b64encode(bytes) {
+    var u8 = toU8(bytes);
+    var s = "";
+    for (var i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+    return window.btoa(s);
+  }
+
+  function b64decode(str) {
+    var s = window.atob(str);
+    var u8 = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+    return u8;
+  }
+
+  /* ==================== IndexedDB ==================== */
+
+  function openDB() {
+    if (db) return Promise.resolve(db);
+    return new Promise(function (resolve, reject) {
+      var req = window.indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = function () {
+        var d = req.result;
+        if (!d.objectStoreNames.contains(STORE_META)) {
+          d.createObjectStore(STORE_META);
+        }
+        if (!d.objectStoreNames.contains(STORE_ENTRIES)) {
+          d.createObjectStore(STORE_ENTRIES, { keyPath: "id" });
+        }
+      };
+      req.onsuccess = function () {
+        db = req.result;
+        resolve(db);
+      };
+      req.onerror = function () {
+        reject(req.error);
+      };
+    });
+  }
+
+  function tx(store, mode, fn) {
+    return openDB().then(function (d) {
+      return new Promise(function (resolve, reject) {
+        var t = d.transaction(store, mode);
+        var request = fn(t.objectStore(store));
+        t.oncomplete = function () {
+          resolve(request ? request.result : undefined);
+        };
+        t.onerror = function () {
+          reject(t.error);
+        };
+        t.onabort = function () {
+          reject(t.error);
+        };
+      });
+    });
+  }
+
+  function metaGet() {
+    return tx(STORE_META, "readonly", function (s) {
+      return s.get(META_KEY);
+    });
+  }
+
+  function metaPut(record) {
+    return tx(STORE_META, "readwrite", function (s) {
+      s.put(record, META_KEY);
+    });
+  }
+
+  function entriesGetAll() {
+    return tx(STORE_ENTRIES, "readonly", function (s) {
+      return s.getAll();
+    });
+  }
+
+  function entryGetRaw(id) {
+    return tx(STORE_ENTRIES, "readonly", function (s) {
+      return s.get(id);
+    });
+  }
+
+  function entryPutRaw(envelope) {
+    return tx(STORE_ENTRIES, "readwrite", function (s) {
+      s.put(envelope);
+    });
+  }
+
+  /* ==================== crypto ==================== */
+
+  function deriveWrappingKey(password, salt, iterations) {
+    return subtle
+      .importKey("raw", utf8Encode(password), "PBKDF2", false, ["deriveKey"])
+      .then(function (baseKey) {
+        return subtle.deriveKey(
+          {
+            name: "PBKDF2",
+            salt: toU8(salt),
+            iterations: iterations,
+            hash: "SHA-256"
+          },
+          baseKey,
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["encrypt", "decrypt"]
+        );
+      });
+  }
+
+  function aesEncrypt(key, plaintextBytes) {
+    var iv = randomBytes(12);
+    return subtle
+      .encrypt({ name: "AES-GCM", iv: iv }, key, plaintextBytes)
+      .then(function (ct) {
+        return { iv: iv, ciphertext: new Uint8Array(ct) };
+      });
+  }
+
+  function aesDecrypt(key, iv, ciphertext) {
+    return subtle
+      .decrypt({ name: "AES-GCM", iv: toU8(iv) }, key, toU8(ciphertext))
+      .then(function (pt) {
+        return new Uint8Array(pt);
+      });
+  }
+
+  // Build a fresh wrapped-key record around an (already imported) vault key,
+  // using the given password. Returns the meta record to store.
+  function wrapVaultKey(rawVaultKey, password) {
+    var salt = randomBytes(16);
+    return deriveWrappingKey(password, salt, PBKDF2_ITERATIONS).then(function (
+      wrappingKey
+    ) {
+      return aesEncrypt(wrappingKey, rawVaultKey).then(function (out) {
+        return {
+          v: 1,
+          salt: salt,
+          iterations: PBKDF2_ITERATIONS,
+          wrapIv: out.iv,
+          wrapped: out.ciphertext
+        };
+      });
+    });
+  }
+
+  // Returns the raw vault-key bytes on success; rejects on wrong password
+  // (AES-GCM auth failure) or a malformed record.
+  function unwrapVaultKey(record, password) {
+    return deriveWrappingKey(password, record.salt, record.iterations).then(
+      function (wrappingKey) {
+        return aesDecrypt(wrappingKey, record.wrapIv, record.wrapped);
+      }
+    );
+  }
+
+  function importVaultKey(rawBytes) {
+    return subtle.importKey("raw", toU8(rawBytes), { name: "AES-GCM" }, true, [
+      "encrypt",
+      "decrypt"
+    ]);
+  }
+
+  /* ==================== entry payload <-> envelope ==================== */
+
+  function encryptPayload(payload) {
+    var bytes = utf8Encode(JSON.stringify(payload));
+    return aesEncrypt(vaultKey, bytes);
+  }
+
+  function decryptEnvelope(env) {
+    return aesDecrypt(vaultKey, env.iv, env.ciphertext).then(function (bytes) {
+      var payload = JSON.parse(utf8Decode(bytes));
+      payload.id = env.id;
+      payload.updatedAt = env.updatedAt;
+      return payload;
+    });
+  }
+
+  function notifyChanged() {
+    if (typeof changeCb === "function") changeCb();
+  }
+
+  function requireUnlocked() {
+    if (!vaultKey) throw new Error("vault is locked");
+  }
+
+  /* ==================== public API ==================== */
+
+  // Ask the browser to keep our storage from being evicted under pressure.
+  // Best-effort: a denied request just leaves the default (evictable) policy.
+  function requestPersistence() {
+    if (navigator.storage && navigator.storage.persist) {
+      try {
+        return navigator.storage.persist();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    return Promise.resolve(false);
+  }
+
+  function isInitialized() {
+    return metaGet().then(function (r) {
+      return !!r;
+    });
+  }
+
+  function isUnlocked() {
+    return !!vaultKey;
+  }
+
+  // First run: generate a vault key, wrap it under the chosen password, and
+  // leave the vault unlocked.
+  function create(password) {
+    return isInitialized().then(function (exists) {
+      if (exists) throw new Error("vault already initialized");
+      var rawVaultKey = randomBytes(32);
+      return wrapVaultKey(rawVaultKey, password)
+        .then(metaPut)
+        .then(function () {
+          return importVaultKey(rawVaultKey);
+        })
+        .then(function (key) {
+          vaultKey = key;
+          requestPersistence();
+        });
+    });
+  }
+
+  // Returns true on success, false on a wrong password. Other failures (no
+  // vault, corrupt record) reject.
+  function unlock(password) {
+    return metaGet().then(function (record) {
+      if (!record) throw new Error("vault not initialized");
+      return unwrapVaultKey(record, password)
+        .then(function (rawVaultKey) {
+          return importVaultKey(rawVaultKey);
+        })
+        .then(function (key) {
+          vaultKey = key;
+          requestPersistence();
+          return true;
+        })
+        .catch(function () {
+          // AES-GCM auth failure === wrong password.
+          return false;
+        });
+    });
+  }
+
+  function lock() {
+    vaultKey = null;
+  }
+
+  // Re-wrap the same vault key under a new password. Verifies the old
+  // password first. One small atomic write — entries are untouched.
+  function changePassword(oldPassword, newPassword) {
+    return metaGet().then(function (record) {
+      if (!record) throw new Error("vault not initialized");
+      return unwrapVaultKey(record, oldPassword).then(
+        function (rawVaultKey) {
+          return wrapVaultKey(rawVaultKey, newPassword).then(metaPut).then(
+            function () {
+              return true;
+            }
+          );
+        },
+        function () {
+          return false; // old password wrong
+        }
+      );
+    });
+  }
+
+  // Decrypted, non-deleted entries. Callers search/sort in memory.
+  function list() {
+    requireUnlocked();
+    return entriesGetAll().then(function (envs) {
+      var live = envs.filter(function (e) {
+        return !e.deleted;
+      });
+      return Promise.all(live.map(decryptEnvelope));
+    });
+  }
+
+  function get(id) {
+    requireUnlocked();
+    return entryGetRaw(id).then(function (env) {
+      if (!env || env.deleted) return null;
+      return decryptEnvelope(env);
+    });
+  }
+
+  // Create (no id) or update (id present). Stamps created/modified inside the
+  // encrypted payload and updatedAt on the envelope (server-visible for sync).
+  function put(fields) {
+    requireUnlocked();
+    var now = Date.now();
+    var id = fields.id || (window.crypto.randomUUID
+      ? window.crypto.randomUUID()
+      : b64encode(randomBytes(16)));
+    var payload = {
+      title: fields.title || "",
+      username: fields.username || "",
+      password: fields.password || "",
+      url: fields.url || "",
+      notes: fields.notes || "",
+      created: fields.created || now,
+      modified: now
+    };
+    return encryptPayload(payload).then(function (enc) {
+      var env = {
+        id: id,
+        iv: enc.iv,
+        ciphertext: enc.ciphertext,
+        updatedAt: now,
+        deleted: false
+      };
+      return entryPutRaw(env).then(function () {
+        notifyChanged();
+        payload.id = id;
+        payload.updatedAt = now;
+        return payload;
+      });
+    });
+  }
+
+  // Tombstone: keep id + updatedAt + deleted so the delete can sync; drop the
+  // ciphertext so no plaintext lingers.
+  function remove(id) {
+    requireUnlocked();
+    return entryPutRaw({
+      id: id,
+      iv: null,
+      ciphertext: null,
+      updatedAt: Date.now(),
+      deleted: true
+    }).then(notifyChanged);
+  }
+
+  // Full encrypted snapshot: the wrapped-key record plus every envelope, all
+  // still ciphertext. The file is only openable with the master password that
+  // made it. Works offline; the vault need not even be unlocked to export.
+  function exportVault() {
+    return Promise.all([metaGet(), entriesGetAll()]).then(function (res) {
+      var record = res[0];
+      var envs = res[1] || [];
+      if (!record) throw new Error("nothing to export");
+      var doc = {
+        magic: EXPORT_MAGIC,
+        version: EXPORT_VERSION,
+        exportedAt: Date.now(),
+        meta: {
+          v: record.v,
+          salt: b64encode(record.salt),
+          iterations: record.iterations,
+          wrapIv: b64encode(record.wrapIv),
+          wrapped: b64encode(record.wrapped)
+        },
+        entries: envs.map(function (e) {
+          return {
+            id: e.id,
+            iv: e.iv ? b64encode(e.iv) : null,
+            ciphertext: e.ciphertext ? b64encode(e.ciphertext) : null,
+            updatedAt: e.updatedAt,
+            deleted: !!e.deleted
+          };
+        })
+      };
+      return new Blob([JSON.stringify(doc)], { type: "application/json" });
+    });
+  }
+
+  // Restore a backup: replaces the whole vault (meta + entries) with the
+  // file's contents. After import, unlock with the password that made the
+  // export. Locks the current session so stale keys aren't reused.
+  function importVault(text) {
+    var doc;
+    try {
+      doc = JSON.parse(text);
+    } catch (e) {
+      return Promise.reject(new Error("not a valid backup file"));
+    }
+    if (!doc || doc.magic !== EXPORT_MAGIC || !doc.meta) {
+      return Promise.reject(new Error("not an Own Vault backup"));
+    }
+    var record = {
+      v: doc.meta.v || 1,
+      salt: b64decode(doc.meta.salt),
+      iterations: doc.meta.iterations,
+      wrapIv: b64decode(doc.meta.wrapIv),
+      wrapped: b64decode(doc.meta.wrapped)
+    };
+    var envs = (doc.entries || []).map(function (e) {
+      return {
+        id: e.id,
+        iv: e.iv ? b64decode(e.iv) : null,
+        ciphertext: e.ciphertext ? b64decode(e.ciphertext) : null,
+        updatedAt: e.updatedAt,
+        deleted: !!e.deleted
+      };
+    });
+    lock();
+    return openDB().then(function (d) {
+      return new Promise(function (resolve, reject) {
+        var t = d.transaction([STORE_META, STORE_ENTRIES], "readwrite");
+        t.objectStore(STORE_META).put(record, META_KEY);
+        var es = t.objectStore(STORE_ENTRIES);
+        es.clear();
+        envs.forEach(function (env) {
+          es.put(env);
+        });
+        t.oncomplete = function () {
+          notifyChanged();
+          resolve(envs.length);
+        };
+        t.onerror = function () {
+          reject(t.error);
+        };
+        t.onabort = function () {
+          reject(t.error);
+        };
+      });
+    });
+  }
+
+  function onChange(cb) {
+    changeCb = cb;
+  }
+
+  return {
+    isInitialized: isInitialized,
+    isUnlocked: isUnlocked,
+    create: create,
+    unlock: unlock,
+    lock: lock,
+    changePassword: changePassword,
+    list: list,
+    get: get,
+    put: put,
+    remove: remove,
+    exportVault: exportVault,
+    importVault: importVault,
+    onChange: onChange
+  };
+})();

@@ -1,7 +1,149 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# Own Vault
 
+A password manager built on top of the PWA template app (see "PWA Template"
+below). One master password unlocks a database of passwords. The PWA is the
+primary client; the Go server is a zero-knowledge sync + hosting point.
+
+## Client-side crypto (the core design rule)
+
+All encryption and decryption happens in the browser via WebCrypto. The Go
+server never sees plaintext or keys — it only ever stores and relays
+ciphertext the client produced. That zero-knowledge property is a hard
+requirement, not an implementation detail.
+
+Keys are layered (key wrapping / envelope encryption, the Bitwarden/1Password
+pattern):
+
+- A random **vault key** (AES-GCM) is generated once and encrypts all
+  entries.
+- Master password → PBKDF2 → **wrapping key**, which encrypts only the vault
+  key. The resulting **wrapped-key record** (wrapped vault key + PBKDF2 salt
+  + iteration count) is one small piece of vault metadata — none of it is
+  secret, and it must survive export/import and sync alongside the entries.
+- Unlock = attempt to unwrap the vault key. A wrong master password is
+  detected by AES-GCM authentication failure on that one record — immediate,
+  unambiguous, and no separate password hash is stored anywhere.
+- Changing the master password = re-wrap the vault key with the new wrapping
+  key and atomically replace the wrapped-key record. One tiny write — no mass
+  re-encryption of entries, so an interrupted password change can't leave the
+  vault half-migrated across two keys.
+- Caveat: re-wrapping protects against future guessing of the old password,
+  but anyone who already copied the vault *and* knew the old password has the
+  vault key forever. So alongside "change password", offer an explicit "full
+  re-encrypt" (new vault key, every entry re-encrypted) for suspected
+  compromise — that rare path is the only one that needs interruption-safe
+  migration handling (e.g. keep both wrapped keys until every entry carries
+  the new key's generation marker).
+
+## Data model: per-entry encrypted records
+
+The vault is NOT one encrypted blob. Each password entry is its own encrypted
+record: `{id, ciphertext, updatedAt, deleted}` — deletes are tombstones so
+they sync. The client encrypts each entry individually.
+
+Per-entry granularity is what makes offline sync tractable: edits to
+different entries on different devices merge silently; only a genuine
+same-entry conflict needs human attention. The accepted trade-off is that the
+server can see the number of entries and their update times (never contents).
+
+## Client storage & backup
+
+- Entries live in the browser's IndexedDB (not localStorage), always
+  encrypted. Call `navigator.storage.persist()` to reduce eviction risk.
+- Browser storage can still be cleared at any time (by the browser or the
+  user clearing cache), so the UI reminds the user not to stay offline too
+  long, and encrypted export/import to a file must work fully offline.
+  Export/import ships first, before sync.
+
+## Go server
+
+A single-file Go program that serves the PWA front end and stores the
+client-encrypted entries in SQLite — use `modernc.org/sqlite` (pure Go, no
+CGo) to keep single-binary cross-compilation and tiny Docker images. By
+default the database lives in the same directory as the executable,
+configurable with runtime flags.
+
+The server runs wherever the person's needs dictate:
+
+- **Desktop only**: run it on their mac/windows/linux machine; the PWA talks
+  to the local server (and can also keep multiple browser brands in sync).
+- **Public sync**: run it on a very small public VM (likely in Docker) so
+  passwords sync between devices on different networks. This mode requires:
+  - a shared-secret auth token — the data is ciphertext, but without auth
+    anyone who finds the URL could tamper with or delete it;
+  - HTTPS via Let's Encrypt or a reverse proxy such as Caddy (the template's
+    mkcert certs are LAN-only).
+
+Once the app is installed as a PWA, having the server running is recommended
+but not required — the PWA works fully offline.
+
+## Sync & conflicts
+
+Entries can be added, changed, and deleted while offline, then synced when a
+server is reachable. Sync compares per-entry `updatedAt`: non-overlapping
+edits merge silently. When the same entry changed on both sides, never guess
+— show the user both versions and let them decide. They can defer, but an
+unresolved conflict stays highlighted somewhere in the UI until resolved.
+Reuse the template's SSE `/events` channel to notify connected clients when
+entries change.
+
+## Non-goals
+
+- **Autofill**: impossible for web tech (needs a native app or browser
+  extension). Lean into what a PWA does well instead — fast offline access,
+  install-to-homescreen, copy buttons with auto-clearing clipboard.
+- Keep the vault logic (crypto, storage, sync) in a cleanly separated JS
+  module so a desktop browser extension (which gets autofill + offline
+  inherently) can be added later without rework.
+
+## Data to Store
+The following data will be kept for each password entry
+- Title
+- username
+- password
+- url
+- general notes
+- created timestamp
+- last modified timestamp
+
+These fields are the *encrypted payload* — they live inside each entry's
+ciphertext as a JSON object (JSON, not fixed columns, so future fields like a
+TOTP secret can be added without a schema change). They sit inside the sync
+envelope from the data model above: `{id, ciphertext, updatedAt, deleted}`.
+The envelope's `updatedAt` is the only timestamp the server can see and is
+what sync compares; the payload's own created/last-modified timestamps stay
+encrypted.
+
+
+## UI
+The user interface will have a search function. It will be the standard type
+that shows all the records, then as you type, the list gets smaller as only
+records that match your search are shown.
+Whle in search mode, only title, username and url are shown, but the search
+will will include the passwork and notes fields in deciding what records
+to show.
+When the user clicks on a record, a modal appears, showing all the data
+for the record.
+
+The username, password and url fields have an icon to copy their contents
+to the clipboard. Copying the password wipes the clipboard automatically after
+a short delay (~20s). This delay can be changed by the user.
+In the modal the password is masked by default with a reveal (show/hide) toggle.
+
+Supporting flows the above depends on:
+
+- **Unlock / first run**: the whole app sits behind a lock gate. On first run
+  the user sets the master password (entered twice); on later launches they
+  enter it to unlock. Nothing is shown or decrypted until unlocked.
+- **Add / edit / delete**: an add button creates a new entry; the record modal
+  has edit and delete actions. Deletes are tombstones (see the data model).
+- **Auto-lock**: the vault re-locks after a period of inactivity and via an
+  explicit lock button, requiring the master password again.
+
+# PWA Template
 ## Commands
 This repo is a GitHub *template* for PWA apps with a hamburger menu. All
 name-specific strings use the placeholder "My App" / `myapp`; the README's
@@ -9,8 +151,8 @@ name-specific strings use the placeholder "My App" / `myapp`; the README's
 new project — keep that list up to date if you add another.
 ```sh
 go run . -dev                 # development: serves web/ from disk, so edit + refresh (no rebuild)
-go build -o myapp .      # production: single binary with web/ embedded via go:embed
-./myapp -addr :3000      # default addr is :8080
+go build -o ownvault .      # production: single binary with web/ embedded via go:embed
+./ownvault -addr :3000      # default addr is :8080
 ```
 
 There are no tests or linters configured. `web/` files are embedded at build

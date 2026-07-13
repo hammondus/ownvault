@@ -1,7 +1,7 @@
 {
-  "name": "My App",
-  "short_name": "MyApp",
-  "description": "My App: Go server, htmx navigation, draggable hamburger menu.",
+  "name": "Own Vault",
+  "short_name": "Own Vault",
+  "description": "Own Vault: an offline-first, end-to-end encrypted password manager.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

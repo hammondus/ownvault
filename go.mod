@@ -1,3 +1,3 @@
-module example.com/myapp
+module github.com/hammondus/ownvault
 
-go 1.26.4
+go 1.26

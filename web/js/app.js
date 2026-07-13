@@ -88,7 +88,7 @@
     navLinks.forEach(function (a) {
       a.classList.toggle("active", a === link);
     });
-    document.title = link.dataset.title + " - My App";
+    document.title = link.dataset.title + " - Own Vault";
   }
 
   // The drawer slides closed while the new content swaps in underneath —

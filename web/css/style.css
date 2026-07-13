@@ -322,3 +322,353 @@ body.offline .toast {
 .menu-btn[aria-expanded="true"] .menu-btn-bar:nth-child(3) {
   transform: translateY(-8px) rotate(-45deg);
 }
+
+/* ==================== Own Vault ==================== */
+
+/* ---------- Lock gate ---------- */
+
+/* display:flex below would override the [hidden] attribute, so restore it. */
+.lock-screen[hidden] {
+  display: none;
+}
+
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1200; /* above everything: header, drawer, hamburger */
+  background: var(--bar-bg);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+/* While locked, freeze the app underneath. */
+body.locked {
+  overflow: hidden;
+}
+
+.lock-card {
+  width: 100%;
+  max-width: 340px;
+  text-align: center;
+}
+
+.lock-logo {
+  font-size: 3rem;
+}
+
+.lock-title {
+  margin: 8px 0 20px;
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.lock-lead {
+  margin: 0 0 16px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
+.lock-input {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 1rem;
+}
+
+.lock-input::placeholder {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.lock-btn {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.lock-error {
+  margin: 0 0 12px;
+  color: #ffb4a8;
+  font-size: 0.85rem;
+}
+
+/* ---------- Passwords screen ---------- */
+
+.pw-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.pw-search {
+  flex: 1;
+  padding: 11px 14px;
+  border: 1px solid #d5dbe0;
+  border-radius: 8px;
+  font-size: 1rem;
+  background: var(--card-bg);
+  color: var(--page-fg);
+}
+
+.pw-add {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pw-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+
+.pw-item {
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+}
+
+.pw-item:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.pw-item-title {
+  font-weight: 600;
+}
+
+.pw-item-sub {
+  margin-top: 3px;
+  font-size: 0.85rem;
+  color: #6b7580;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pw-empty {
+  margin-top: 32px;
+  text-align: center;
+  color: #6b7580;
+}
+
+/* ---------- Record modal ---------- */
+
+.modal[hidden] {
+  display: none;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1080; /* above hamburger (1000), below copy toast (1100) */
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.modal-card {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--card-bg);
+  color: var(--page-fg);
+  border-radius: 14px 14px 0 0;
+  padding: 20px;
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.3);
+}
+
+@media (min-width: 560px) {
+  .modal {
+    align-items: center;
+  }
+  .modal-card {
+    border-radius: 14px;
+  }
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 1.25rem;
+  word-break: break-word;
+}
+
+.modal-body {
+  padding: 4px 0;
+}
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.field {
+  padding: 10px 0;
+  border-bottom: 1px solid #eceff2;
+}
+
+.field-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8a939c;
+  margin-bottom: 4px;
+}
+
+.field-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-value {
+  flex: 1;
+  word-break: break-word;
+  font-size: 1rem;
+}
+
+.field-value.masked {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
+.field-when {
+  margin-top: 12px;
+  font-size: 0.75rem;
+  color: #8a939c;
+}
+
+.icon-btn {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 4px 6px;
+  border-radius: 6px;
+  line-height: 1;
+}
+
+.icon-btn:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.modal-close {
+  font-size: 1rem;
+  color: #6b7580;
+}
+
+/* ---------- Forms (edit modal + settings) ---------- */
+
+.form-row {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.8rem;
+  color: #6b7580;
+  margin-bottom: 4px;
+}
+
+.form-input {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d5dbe0;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-family: inherit;
+  background: #fff;
+  color: var(--page-fg);
+}
+
+textarea.form-input {
+  resize: vertical;
+}
+
+.stack {
+  margin-top: 16px;
+}
+
+.stack .form-input {
+  margin-bottom: 10px;
+}
+
+.card-title {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+}
+
+.card-subtitle {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.card-note {
+  font-size: 0.85rem;
+  color: #6b7580;
+  line-height: 1.4;
+}
+
+.form-msg {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  color: #2e7d32;
+}
+
+.form-msg.form-msg-error {
+  color: #c62828;
+}
+
+.import-label {
+  display: inline-block;
+  margin-left: 8px;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.btn-danger {
+  background: #c62828;
+}

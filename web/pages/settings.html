@@ -1,15 +1,35 @@
 <section class="screen">
   <h1>Settings</h1>
-  <p>A sample settings screen.</p>
+
   <div class="card">
-    <label class="setting-row">
-      <span>Enable notifications</span>
-      <input type="checkbox" checked>
+    <h2 class="card-title">Vault</h2>
+    <button id="lock-btn" class="btn" type="button">Lock now</button>
+
+    <form id="change-pw-form" class="stack">
+      <h3 class="card-subtitle">Change master password</h3>
+      <input class="form-input" type="password" name="old" placeholder="Current password" autocomplete="current-password">
+      <input class="form-input" type="password" name="new" placeholder="New password" autocomplete="new-password">
+      <input class="form-input" type="password" name="new2" placeholder="Confirm new password" autocomplete="new-password">
+      <p id="change-pw-msg" class="form-msg" hidden></p>
+      <button class="btn" type="submit">Change password</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">Backup</h2>
+    <p class="card-note">The export is fully encrypted — it can only be opened
+      with the master password that made it. Keep a copy somewhere safe; browser
+      storage can be cleared at any time.</p>
+    <button id="export-btn" class="btn" type="button">Export encrypted backup</button>
+    <label class="btn btn-ghost import-label">
+      Import backup…
+      <input id="import-file" type="file" accept="application/json,.json" hidden>
     </label>
-    <label class="setting-row">
-      <span>Dark mode</span>
-      <input type="checkbox">
-    </label>
+    <p id="backup-msg" class="form-msg" hidden></p>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">Appearance</h2>
     <label class="setting-row">
       <span>Colour scheme</span>
       <!-- app.js sets the current value on swap-in and applies changes -->
@@ -18,6 +38,6 @@
         <option value="classic">Classic blue</option>
       </select>
     </label>
-    <button id="reset-btn" class="btn" type="button">Reset menu button position</button>
+    <button id="reset-btn" class="btn btn-ghost" type="button">Reset menu button position</button>
   </div>
 </section>
