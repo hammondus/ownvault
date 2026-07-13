@@ -133,6 +133,11 @@
     <div id="conflict-card" class="modal-card" role="dialog" aria-modal="true"></div>
   </div>
 
+  <!-- Emergency recovery sheet: hidden on screen; the print stylesheet shows
+       only this (in place of the app) while body.printing-sheet is set.
+       vaultui.js fills it from the "critical" entries just before window.print(). -->
+  <div id="print-sheet" class="print-sheet" aria-hidden="true"></div>
+
   <script src="/js/htmx.min.js"></script>
   <script src="/js/vault.js"></script>
   <script src="/js/sync.js"></script>

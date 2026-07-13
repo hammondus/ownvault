@@ -736,6 +736,39 @@ textarea.form-input {
   border-left: 3px solid #b45309;
 }
 
+/* "critical" (recovery-sheet) marker — distinct from the amber conflict badge */
+.pw-badge-critical {
+  background: #7c3aed;
+}
+
+/* Checkbox row in the edit form (e.g. "mark critical") */
+.form-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.form-check-input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+.form-check-label {
+  line-height: 1.35;
+  color: var(--page-fg);
+}
+
+/* Emphasised card note for security warnings */
+.card-warn {
+  color: #b45309;
+  margin-top: 6px;
+}
+
 .sync-row {
   display: flex;
   align-items: center;
@@ -801,4 +834,70 @@ textarea.form-input {
 
 .cfx-actions .btn {
   margin-top: 0;
+}
+
+/* ==================== emergency recovery sheet (print) ==================== */
+
+/* Never part of the on-screen app. */
+.print-sheet {
+  display: none;
+}
+
+@media print {
+  /* Replace the whole app with just the sheet while printing it. */
+  body.printing-sheet > *:not(.print-sheet) {
+    display: none !important;
+  }
+  body.printing-sheet .print-sheet {
+    display: block !important;
+    color: #000;
+    background: #fff;
+  }
+
+  @page {
+    margin: 16mm;
+  }
+
+  .ps-title {
+    font-size: 17pt;
+    margin: 0 0 2px;
+  }
+  .ps-date {
+    font-size: 9pt;
+    color: #333;
+    margin: 0 0 14px;
+  }
+  .ps-warning {
+    border: 2px solid #000;
+    padding: 8px 10px;
+    margin: 0 0 16px;
+    font-size: 10pt;
+    line-height: 1.4;
+  }
+  .ps-entry {
+    border-top: 1px solid #000;
+    padding: 10px 0;
+    page-break-inside: avoid;
+  }
+  .ps-entry-title {
+    font-size: 12pt;
+    margin: 0 0 4px;
+  }
+  .ps-field {
+    display: flex;
+    gap: 10px;
+    font-size: 10pt;
+    margin: 3px 0;
+  }
+  .ps-label {
+    min-width: 90px;
+    font-weight: bold;
+  }
+  /* Monospace + wrap so long keys and multi-line backup codes transcribe
+     unambiguously (0 vs O, l vs 1). */
+  .ps-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
 }

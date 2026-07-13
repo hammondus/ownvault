@@ -267,6 +267,7 @@
     searchTerm = "";
     closeModal();
     closeConflictModal();
+    clearRecoverySheet(); // never leave printed plaintext in the DOM past a lock
     var list = byId("pw-list");
     if (list) list.innerHTML = "";
     showConflictBanner(0);
@@ -339,6 +340,9 @@
     shown.forEach(function (e) {
       var meta = [e.username, e.url].filter(Boolean).join("  •  ");
       var titleNode = el("div", { class: "pw-item-title", text: e.title || "(untitled)" });
+      if (e.critical) {
+        titleNode.appendChild(el("span", { class: "pw-badge pw-badge-critical", text: "critical" }));
+      }
       if (e.conflict) {
         titleNode.appendChild(el("span", { class: "pw-badge", text: "conflict" }));
       }
@@ -420,9 +424,13 @@
     var when =
       "Modified " + new Date(entry.modified || entry.updatedAt).toLocaleString();
 
+    var title = el("h2", { class: "modal-title", text: entry.title || "(untitled)" });
+    if (entry.critical) {
+      title.appendChild(el("span", { class: "pw-badge pw-badge-critical", text: "critical" }));
+    }
     card.appendChild(
       el("div", { class: "modal-head" }, [
-        el("h2", { class: "modal-title", text: entry.title || "(untitled)" }),
+        title,
         el("button", {
           class: "icon-btn modal-close",
           type: "button",
@@ -506,6 +514,13 @@
     });
     notes.value = entry.notes || "";
 
+    var criticalInput = el("input", { type: "checkbox", name: "critical", class: "form-check-input" });
+    criticalInput.checked = !!entry.critical;
+    var criticalRow = el("label", { class: "form-check" }, [
+      criticalInput,
+      el("span", { class: "form-check-label", text: "Critical — include on the printed emergency recovery sheet" })
+    ]);
+
     // novalidate: the url field pre-fills a bare "https://" that native
     // type=url validation would reject and silently block submission on; we
     // normalise the url ourselves in saveFromForm.
@@ -519,7 +534,8 @@
       el("label", { class: "form-row" }, [
         el("span", { class: "form-label", text: "Notes" }),
         notes
-      ])
+      ]),
+      criticalRow
     ]);
     card.appendChild(form);
 
@@ -566,7 +582,8 @@
       username: form.username.value.trim(),
       password: form.password.value,
       url: url,
-      notes: form.notes.value
+      notes: form.notes.value,
+      critical: form.critical.checked
     };
     Vault.put(fields).then(function () {
       closeModal();
@@ -756,6 +773,90 @@
     if (window.Sync) copyValue(Sync.getVaultId(), false);
   });
 
+  /* ==================== emergency recovery sheet ==================== */
+  // Print the entries the user marked "critical" (crypto seeds, master
+  // passwords, 2FA backup codes) onto paper — an offline last resort immune to
+  // device failure / ransomware. Rendered into #print-sheet, which a print
+  // stylesheet shows in place of the app while body.printing-sheet is set.
+
+  function buildRecoverySheet(list) {
+    var sheet = byId("print-sheet");
+    if (!sheet) return;
+    sheet.innerHTML = "";
+    sheet.appendChild(el("h1", { class: "ps-title", text: "Own Vault — Emergency Recovery Sheet" }));
+    sheet.appendChild(el("p", { class: "ps-date", text: "Printed " + new Date().toLocaleString() }));
+    sheet.appendChild(
+      el("p", { class: "ps-warning" }, [
+        el("strong", { text: "Keep this paper safe. " }),
+        el("span", {
+          text:
+            "It lists passwords in plain text — anyone holding it can use them " +
+            "without your master password. Store it somewhere physically secure " +
+            "and destroy old copies."
+        })
+      ])
+    );
+
+    function field(rows, label, val) {
+      if (!val) return;
+      rows.push(
+        el("div", { class: "ps-field" }, [
+          el("span", { class: "ps-label", text: label }),
+          el("span", { class: "ps-value", text: val })
+        ])
+      );
+    }
+
+    list.forEach(function (e) {
+      var rows = [el("h2", { class: "ps-entry-title", text: e.title || "(untitled)" })];
+      field(rows, "Username", e.username);
+      field(rows, "Password", e.password);
+      field(rows, "URL", e.url);
+      field(rows, "Notes", e.notes);
+      sheet.appendChild(el("div", { class: "ps-entry" }, rows));
+    });
+  }
+
+  function clearRecoverySheet() {
+    document.body.classList.remove("printing-sheet");
+    var sheet = byId("print-sheet");
+    if (sheet) sheet.innerHTML = ""; // don't leave plaintext secrets in the DOM
+  }
+
+  function printRecoverySheet() {
+    if (!Vault.isUnlocked()) return;
+    var critical = entries.filter(function (e) {
+      return e.critical;
+    });
+    if (!critical.length) {
+      settingsMsg(
+        "recovery-msg",
+        "No entries are marked critical yet. Open an entry, tap Edit, and tick “Critical”.",
+        true
+      );
+      return;
+    }
+    var warn =
+      "Print an emergency recovery sheet?\n\n" +
+      critical.length + " critical " + (critical.length > 1 ? "entries" : "entry") +
+      " will be printed IN PLAIN TEXT, including passwords.\n\n" +
+      "• Anyone who holds the paper has these secrets — no master password needed.\n" +
+      "• Printers (especially shared / office / networked) can keep a copy of what they print.\n" +
+      "• Store the sheet somewhere physically secure and shred it when it's replaced.\n\n" +
+      "Continue?";
+    if (!window.confirm(warn)) return;
+    buildRecoverySheet(critical);
+    document.body.classList.add("printing-sheet");
+    // Let the DOM paint the sheet before the (blocking) print dialog opens.
+    setTimeout(function () {
+      window.print();
+    }, 50);
+    settingsMsg("recovery-msg", "Sent " + critical.length + " entries to your printer.", false);
+  }
+
+  // Tidy up after the print dialog closes (or is cancelled).
+  window.addEventListener("afterprint", clearRecoverySheet);
+
   /* ==================== settings-screen controls ==================== */
   // These live in the swapped-in Settings fragment, so bind via delegation.
 
@@ -778,6 +879,10 @@
     }
     if (e.target.closest("#vault-id-copy")) {
       if (window.Sync) copyValue(Sync.getVaultId(), false);
+      return;
+    }
+    if (e.target.closest("#recovery-print")) {
+      printRecoverySheet();
       return;
     }
     if (e.target.closest("#export-btn")) {

@@ -392,6 +392,10 @@ window.Vault = (function () {
       password: fields.password || "",
       url: fields.url || "",
       notes: fields.notes || "",
+      // "critical" marks an entry for the printed emergency recovery sheet
+      // (crypto seeds, master passwords, 2FA backup codes). Just another
+      // encrypted payload field — never server-visible.
+      critical: !!fields.critical,
       created: fields.created || now,
       modified: now
     };
