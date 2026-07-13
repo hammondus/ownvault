@@ -34,7 +34,10 @@ window.Vault = (function () {
   // thing standing between an attacker with the ciphertext and the vault.
   var PBKDF2_ITERATIONS = 600000;
   var EXPORT_MAGIC = "ownvault.backup";
-  var EXPORT_VERSION = 1;
+  // v2 adds the (non-secret) vaultId so a restore can reattach to the same
+  // server namespace. v1 files (no vaultId) still import — they just merge into
+  // whatever vault the restoring device is already on.
+  var EXPORT_VERSION = 2;
 
   var subtle = window.crypto.subtle;
 
@@ -438,7 +441,11 @@ window.Vault = (function () {
   // Full encrypted snapshot: the wrapped-key record plus every envelope, all
   // still ciphertext. The file is only openable with the master password that
   // made it. Works offline; the vault need not even be unlocked to export.
-  function exportVault() {
+  //
+  // vaultId (optional, passed in by the caller since it's a sync-layer concern,
+  // not crypto) is recorded so a restore can rejoin the same server namespace.
+  // It's an unguessable id, not a secret, and the payload is encrypted anyway.
+  function exportVault(vaultId) {
     return Promise.all([metaGet(), entriesGetAll()]).then(function (res) {
       var record = res[0];
       var envs = res[1] || [];
@@ -447,6 +454,7 @@ window.Vault = (function () {
         magic: EXPORT_MAGIC,
         version: EXPORT_VERSION,
         exportedAt: Date.now(),
+        vaultId: vaultId || "",
         meta: {
           v: record.v,
           salt: b64encode(record.salt),
@@ -481,6 +489,11 @@ window.Vault = (function () {
   // wrapped-key record is marked dirty too, but the pull-first ordering lets an
   // existing server meta win, so a restore of the same vault never reverts a
   // password change made elsewhere; only an empty server gets seeded from it.
+  //
+  // Resolves to { entries, vaultId }: vaultId is the namespace recorded in the
+  // file (v2 backups; "" for older ones). The caller adopts it (Sync.setVaultId)
+  // so the restored device reattaches to the same server vault and the rebase
+  // above happens against that vault's live state.
   function importVault(text) {
     var doc;
     try {
@@ -529,7 +542,7 @@ window.Vault = (function () {
         });
         t.oncomplete = function () {
           notifyChanged();
-          resolve(envs.length);
+          resolve({ entries: envs.length, vaultId: doc.vaultId || "" });
         };
         t.onerror = function () {
           reject(t.error);
