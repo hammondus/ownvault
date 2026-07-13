@@ -399,6 +399,22 @@ body.locked {
   font-size: 0.85rem;
 }
 
+/* Read-only Vault ID on the welcome step: monospace + wraps so the full id
+   is visible and tap-selectable. */
+.lock-vaultid {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+  text-align: center;
+  cursor: text;
+}
+
+.lock-hint {
+  margin: 4px 0 16px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  opacity: 0.65;
+}
+
 .lock-link {
   display: block;
   width: 100%;
@@ -729,6 +745,13 @@ textarea.form-input {
 
 .sync-row .btn {
   margin-top: 0;
+  flex: none;
+}
+
+/* Read-only Vault ID sits next to its Copy button and takes the slack. */
+.sync-row .form-input {
+  flex: 1;
+  min-width: 0;
 }
 
 .sync-status {

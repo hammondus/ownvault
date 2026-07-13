@@ -67,16 +67,29 @@
     show(byId("lock-screen"), true);
     show(byId("create-form"), mode === "create");
     show(byId("unlock-form"), mode === "unlock");
-    show(byId("token-form"), mode === "token");
+    show(byId("connect-form"), mode === "connect");
+    show(byId("welcome-panel"), mode === "welcome");
     show(byId("create-error"), false);
     show(byId("unlock-error"), false);
-    show(byId("token-error"), false);
-    ["create-pw", "create-pw2", "unlock-pw", "token-input"].forEach(function (id) {
+    show(byId("connect-error"), false);
+    show(byId("restore-msg"), false);
+    // The welcome step surfaces the freshly created vault's id.
+    if (mode === "welcome") {
+      var wid = byId("welcome-vault-id");
+      if (wid) wid.value = window.Sync ? Sync.getVaultId() : "";
+    }
+    // Start the connect fields empty. The Vault ID must be the *other* device's
+    // vault (copied from its Settings) — never this device's own local id, which
+    // would just fail to find anything and confuse.
+    ["create-pw", "create-pw2", "unlock-pw", "connect-id", "connect-token"].forEach(function (id) {
       var f = byId(id);
       if (f) f.value = "";
     });
     var focusId =
-      mode === "create" ? "create-pw" : mode === "token" ? "token-input" : "unlock-pw";
+      mode === "create" ? "create-pw"
+        : mode === "connect" ? "connect-id"
+        : mode === "welcome" ? "welcome-continue"
+        : "unlock-pw";
     var focus = byId(focusId);
     if (focus) {
       setTimeout(function () {
@@ -96,42 +109,102 @@
         showLock("unlock");
         return;
       }
-      // Fresh device: try to pull an existing vault (meta + entries) from the
-      // server so we can offer "unlock" instead of "create". If the server
-      // requires a token we don't have yet, prompt for it first.
+      // Fresh device. With namespacing there is no single "the vault" to find,
+      // so we can't silently bootstrap — the user either supplies an existing
+      // Vault ID (connect) or starts a new vault. Offline vaults skip straight
+      // to create.
       if (window.Sync && Sync.isEnabled()) {
-        Sync.bootstrap().then(function (res) {
-          if (res.exists) showLock("unlock");
-          else if (res.needsAuth) showLock("token");
-          else showLock("create");
-        });
+        showLock("connect");
       } else {
         showLock("create");
       }
     });
   }
 
-  // Fresh device joining a token-protected server: store the token, then
-  // re-bootstrap. Success routes to unlock (vault found) or create (server
-  // authenticated but empty); a rejected token stays on this step.
-  function handleToken(e) {
+  // Connect this device to an existing vault: store its id (+ token), then pull.
+  // Success (server had that vault's wrapped-key record) routes to unlock; a bad
+  // token or unknown id reports inline so the user can fix it.
+  function handleConnect(e) {
     e.preventDefault();
-    var err = byId("token-error");
+    var err = byId("connect-error");
     if (!window.Sync) {
       showLock("create");
       return;
     }
-    Sync.setToken(byId("token-input").value.trim());
+    var id = byId("connect-id").value.trim();
+    if (!id) {
+      err.textContent = "Enter your Vault ID, or start a new vault.";
+      show(err, true);
+      return;
+    }
+    Sync.setToken(byId("connect-token").value.trim());
+    Sync.setVaultId(id);
     Sync.bootstrap().then(function (res) {
       if (res.exists) {
         showLock("unlock");
       } else if (res.needsAuth) {
-        err.textContent = "That token was rejected. Check it and try again.";
+        err.textContent = "Access token required or incorrect.";
         show(err, true);
       } else {
-        showLock("create");
+        err.textContent =
+          "No vault with that ID on this server. Check the ID, or start a new vault.";
+        show(err, true);
       }
     });
+  }
+
+  // "Start a new vault instead": keep any token the user typed (a shared server
+  // may require it even to create), mint a fresh namespace, and collect a master
+  // password.
+  function handleConnectCreate() {
+    if (window.Sync) {
+      Sync.setToken(byId("connect-token").value.trim());
+      Sync.setVaultId(Sync.newVaultId());
+    }
+    showLock("create");
+  }
+
+  // "Use offline only": no server at all. Disable sync so we never push, and
+  // still mint an id so enabling sync later just works.
+  function handleConnectOffline() {
+    if (window.Sync) {
+      Sync.setEnabled(false);
+      Sync.ensureVaultId();
+    }
+    showLock("create");
+  }
+
+  // Recovery path from the lock gate (no vault to unlock yet): pick an encrypted
+  // backup file, restore it, and adopt the vault id it records so the device
+  // reattaches to that server namespace. Then unlock with the backup's password.
+  function openRestore() {
+    var f = byId("restore-file");
+    if (f) f.click();
+  }
+
+  function handleRestoreFile(e) {
+    var file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    var msg = byId("restore-msg");
+    var reader = new FileReader();
+    reader.onload = function () {
+      Vault.importVault(String(reader.result)).then(
+        function (res) {
+          if (res.vaultId && window.Sync) Sync.setVaultId(res.vaultId);
+          // Backup restored -> a vault now exists locally; unlock with its
+          // master password. showLock clears the restore message.
+          showLock("unlock");
+        },
+        function (err) {
+          if (msg) {
+            msg.textContent = (err && err.message) || "Couldn't read that backup.";
+            show(msg, true);
+          }
+        }
+      );
+    };
+    reader.readAsText(file);
   }
 
   function afterUnlock() {
@@ -157,7 +230,16 @@
       show(err, true);
       return;
     }
-    Vault.create(pw).then(afterUnlock, function () {
+    // Every new vault gets its own server namespace (safety net for the offline
+    // path that reaches create directly; the connect screen sets one already).
+    if (window.Sync) Sync.ensureVaultId();
+    Vault.create(pw).then(function () {
+      // Surface the Vault ID once, so the user can connect other devices. Skip
+      // it for offline-only vaults (no server to connect to yet); it's always in
+      // Settings later regardless.
+      if (window.Sync && Sync.isEnabled()) showLock("welcome");
+      else afterUnlock();
+    }, function () {
       err.textContent = "Couldn't create the vault.";
       show(err, true);
     });
@@ -603,6 +685,8 @@
       if (tok) tok.value = Sync.getToken();
       var st = byId("sync-status");
       if (st) st.textContent = Sync.getStatus().message || "";
+      var vid = byId("vault-id");
+      if (vid) vid.value = Sync.getVaultId();
     }
   }
 
@@ -661,12 +745,15 @@
   // Lock overlay forms (persistent chrome).
   byId("create-form").addEventListener("submit", handleCreate);
   byId("unlock-form").addEventListener("submit", handleUnlock);
-  byId("token-form").addEventListener("submit", handleToken);
-  byId("token-offline").addEventListener("click", function () {
-    // Give up on joining the server and make a local-only vault. Disable sync
-    // so we can't later clobber the server's vault with an unconditional push.
-    if (window.Sync) Sync.setEnabled(false);
-    showLock("create");
+  byId("connect-form").addEventListener("submit", handleConnect);
+  byId("connect-create").addEventListener("click", handleConnectCreate);
+  byId("connect-offline").addEventListener("click", handleConnectOffline);
+  byId("create-restore").addEventListener("click", openRestore);
+  byId("connect-restore").addEventListener("click", openRestore);
+  byId("restore-file").addEventListener("change", handleRestoreFile);
+  byId("welcome-continue").addEventListener("click", afterUnlock);
+  byId("welcome-copy").addEventListener("click", function () {
+    if (window.Sync) copyValue(Sync.getVaultId(), false);
   });
 
   /* ==================== settings-screen controls ==================== */
@@ -689,8 +776,12 @@
       if (window.Sync) Sync.syncNow();
       return;
     }
+    if (e.target.closest("#vault-id-copy")) {
+      if (window.Sync) copyValue(Sync.getVaultId(), false);
+      return;
+    }
     if (e.target.closest("#export-btn")) {
-      Vault.exportVault().then(function (blob) {
+      Vault.exportVault(window.Sync ? Sync.getVaultId() : "").then(function (blob) {
         var url = URL.createObjectURL(blob);
         var stamp = new Date().toISOString().slice(0, 10);
         var a = el("a", { href: url, download: "ownvault-backup-" + stamp + ".json" });
@@ -746,8 +837,12 @@
     var reader = new FileReader();
     reader.onload = function () {
       Vault.importVault(String(reader.result)).then(
-        function (n) {
-          settingsMsg("backup-msg", "Imported " + n + " entries. Unlock with that backup's password.", false);
+        function (res) {
+          // Reattach to the vault the backup came from (v2 backups), so the
+          // restored device rejoins the same server namespace and keeps syncing
+          // with any surviving devices instead of forking a new vault.
+          if (res.vaultId && window.Sync) Sync.setVaultId(res.vaultId);
+          settingsMsg("backup-msg", "Imported " + res.entries + " entries. Unlock with that backup's password.", false);
           lockNow();
         },
         function (err) {

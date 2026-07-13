@@ -69,6 +69,7 @@
                placeholder="Confirm master password" autocomplete="new-password">
         <p id="create-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Create vault</button>
+        <button id="create-restore" class="lock-link" type="button">Restore from a backup file</button>
       </form>
       <form id="unlock-form" class="lock-form" hidden>
         <p class="lock-lead">Enter your master password to unlock.</p>
@@ -77,17 +78,40 @@
         <p id="unlock-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Unlock</button>
       </form>
-      <!-- Shown on a fresh device when the sync server requires a token before
-           it will hand over the vault (see vaultui.js startGate). -->
-      <form id="token-form" class="lock-form" hidden>
-        <p class="lock-lead">This sync server needs an access token before it
-          will share your vault. Enter it to continue.</p>
-        <input id="token-input" class="lock-input" type="password"
-               placeholder="Access token" autocomplete="off">
-        <p id="token-error" class="lock-error" hidden></p>
-        <button class="btn lock-btn" type="submit">Continue</button>
-        <button id="token-offline" class="lock-link" type="button">Set up a new offline vault instead</button>
+      <!-- Shown on a fresh device with sync on: join an existing vault by its
+           id (multi-device / joining someone's shared server), or start a new
+           one. See vaultui.js startGate / handleConnect. -->
+      <form id="connect-form" class="lock-form" hidden>
+        <p class="lock-lead">Connect this device to an existing vault, or start a
+          new one. Your Vault ID is shown in Settings on a device that already
+          has the vault.</p>
+        <input id="connect-id" class="lock-input" type="text"
+               placeholder="Vault ID" autocomplete="off" autocapitalize="off"
+               autocorrect="off" spellcheck="false">
+        <input id="connect-token" class="lock-input" type="password"
+               placeholder="Access token (only if the server needs one)" autocomplete="off">
+        <p id="connect-error" class="lock-error" hidden></p>
+        <button class="btn lock-btn" type="submit">Connect</button>
+        <button id="connect-create" class="lock-link" type="button">Start a new vault instead</button>
+        <button id="connect-restore" class="lock-link" type="button">Restore from a backup file</button>
+        <button id="connect-offline" class="lock-link" type="button">Use offline only (no sync)</button>
       </form>
+      <!-- Shown once, right after a new vault is created: surface the Vault ID so
+           the user can connect other devices to this same vault. -->
+      <div id="welcome-panel" class="lock-form" hidden>
+        <p class="lock-lead">Your vault is ready. To sync another device to
+          <strong>this</strong> vault, connect it using the Vault ID below.</p>
+        <input id="welcome-vault-id" class="lock-input lock-vaultid" type="text"
+               readonly aria-label="Vault ID">
+        <button id="welcome-copy" class="btn btn-ghost lock-btn" type="button">Copy Vault ID</button>
+        <p class="lock-hint">You can always find it again in Settings → Sync. It
+          isn't a secret — your master password is what protects the vault.</p>
+        <button id="welcome-continue" class="btn lock-btn" type="button">Continue</button>
+      </div>
+      <!-- Recovery on a fresh device: import an encrypted backup before there is
+           any vault to unlock. Shared by the create/connect restore links. -->
+      <input id="restore-file" type="file" accept="application/json,.json" hidden>
+      <p id="restore-msg" class="lock-error" hidden></p>
     </div>
   </div>
 
