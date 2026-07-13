@@ -672,3 +672,97 @@ textarea.form-input {
 .btn-danger {
   background: #c62828;
 }
+
+/* ---------- Sync: conflict banner, badges, modal ---------- */
+
+.conflict-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: calc(var(--bar-height) + env(safe-area-inset-top));
+  border: none;
+  width: 100%;
+  background: #b45309;
+  color: #fff;
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 8px 16px;
+  cursor: pointer;
+  z-index: 690; /* just under the top bar (700) */
+}
+
+.pw-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #b45309;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.pw-item-conflict {
+  border-left: 3px solid #b45309;
+}
+
+.sync-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.sync-row .btn {
+  margin-top: 0;
+}
+
+.sync-status {
+  font-size: 0.85rem;
+  color: #6b7580;
+}
+
+.cfx {
+  padding: 14px 0;
+  border-bottom: 1px solid #eceff2;
+}
+
+.cfx-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.cfx-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.cfx-side {
+  background: #f6f8fa;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.cfx-line {
+  font-size: 0.85rem;
+  word-break: break-word;
+  margin-top: 3px;
+}
+
+.cfx-note {
+  font-size: 0.85rem;
+  color: #8a939c;
+  font-style: italic;
+}
+
+.cfx-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cfx-actions .btn {
+  margin-top: 0;
+}

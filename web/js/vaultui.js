@@ -14,7 +14,20 @@
   "use strict";
 
   var AUTO_LOCK_MS = 5 * 60 * 1000; // re-lock after this much inactivity
-  var CLIP_CLEAR_MS = 20 * 1000; // wipe a copied password after this long
+  var CLIP_CLEAR_KEY = "clipClearSecs"; // localStorage: password clipboard wipe delay
+  var CLIP_CLEAR_DEFAULT = 20; // seconds; 0 = never wipe
+
+  function clipClearMs() {
+    var secs = CLIP_CLEAR_DEFAULT;
+    try {
+      var raw = localStorage.getItem(CLIP_CLEAR_KEY);
+      if (raw !== null && raw !== "") secs = parseInt(raw, 10);
+    } catch (e) {
+      /* ignore */
+    }
+    if (isNaN(secs) || secs < 0) secs = CLIP_CLEAR_DEFAULT;
+    return secs * 1000;
+  }
 
   var entries = []; // decrypted cache, refreshed on unlock and on change
   var searchTerm = "";
@@ -76,7 +89,19 @@
 
   function startGate() {
     Vault.isInitialized().then(function (exists) {
-      showLock(exists ? "unlock" : "create");
+      if (exists) {
+        showLock("unlock");
+        return;
+      }
+      // Fresh device: try to pull an existing vault (meta + entries) from the
+      // server so we can offer "unlock" instead of "create".
+      if (window.Sync && Sync.isEnabled()) {
+        Sync.bootstrap().then(function (nowExists) {
+          showLock(nowExists ? "unlock" : "create");
+        });
+      } else {
+        showLock("create");
+      }
     });
   }
 
@@ -84,6 +109,8 @@
     hideLock();
     resetIdle();
     loadEntries();
+    if (window.Sync) Sync.start();
+    refreshConflicts();
   }
 
   function handleCreate(e) {
@@ -124,11 +151,14 @@
 
   function lockNow() {
     Vault.lock();
+    if (window.Sync) Sync.stop();
     entries = [];
     searchTerm = "";
     closeModal();
+    closeConflictModal();
     var list = byId("pw-list");
     if (list) list.innerHTML = "";
+    showConflictBanner(0);
     clearTimeout(idleTimer);
     showLock("unlock");
   }
@@ -197,17 +227,24 @@
 
     shown.forEach(function (e) {
       var meta = [e.username, e.url].filter(Boolean).join("  •  ");
-      var row = el("li", { class: "pw-item", "data-id": e.id, tabindex: "0" }, [
-        el("div", { class: "pw-item-title", text: e.title || "(untitled)" }),
-        meta ? el("div", { class: "pw-item-sub", text: meta }) : null
-      ]);
+      var titleNode = el("div", { class: "pw-item-title", text: e.title || "(untitled)" });
+      if (e.conflict) {
+        titleNode.appendChild(el("span", { class: "pw-badge", text: "conflict" }));
+      }
+      var row = el("li", {
+        class: "pw-item" + (e.conflict ? " pw-item-conflict" : ""),
+        "data-id": e.id,
+        tabindex: "0"
+      }, [titleNode, meta ? el("div", { class: "pw-item-sub", text: meta }) : null]);
       list.appendChild(row);
     });
   }
 
   /* ==================== record modal ==================== */
 
-  function copyRow(labelText, value, isPassword) {
+  function copyRow(labelText, value, kind) {
+    var isPassword = kind === "password";
+    var isUrl = kind === "url";
     var valNode = el("span", {
       class: "field-value" + (isPassword ? " masked" : ""),
       text: value || ""
@@ -223,6 +260,17 @@
           "data-reveal": "1",
           "aria-label": "Show password",
           text: "👁"
+        })
+      );
+    }
+    if (isUrl) {
+      actions.push(
+        el("button", {
+          class: "icon-btn",
+          type: "button",
+          "data-open": "1",
+          "aria-label": "Open URL in a new tab",
+          text: "↗"
         })
       );
     }
@@ -275,9 +323,9 @@
     );
 
     var body = el("div", { class: "modal-body" }, [
-      entry.username ? copyRow("Username", entry.username, false) : null,
-      entry.password ? copyRow("Password", entry.password, true) : null,
-      entry.url ? copyRow("URL", entry.url, false) : null,
+      entry.username ? copyRow("Username", entry.username, "text") : null,
+      entry.password ? copyRow("Password", entry.password, "password") : null,
+      entry.url ? copyRow("URL", entry.url, "url") : null,
       textField("Notes", entry.notes),
       el("div", { class: "field-when", text: when })
     ]);
@@ -347,11 +395,16 @@
     });
     notes.value = entry.notes || "";
 
-    var form = el("form", { id: "record-form", class: "modal-body" }, [
+    // novalidate: the url field pre-fills a bare "https://" that native
+    // type=url validation would reject and silently block submission on; we
+    // normalise the url ourselves in saveFromForm.
+    var form = el("form", { id: "record-form", class: "modal-body", novalidate: "novalidate" }, [
       inputField("title", "Title", entry.title, "text"),
       inputField("username", "Username", entry.username, "text"),
       inputField("password", "Password", entry.password, "text"),
-      inputField("url", "URL", entry.url, "url"),
+      // Pre-fill the scheme on new entries to save typing; a bare scheme is
+      // treated as empty on save.
+      inputField("url", "URL", entry.id ? entry.url : entry.url || "https://", "url"),
       el("label", { class: "form-row" }, [
         el("span", { class: "form-label", text: "Notes" }),
         notes
@@ -393,13 +446,15 @@
           return x.id === id;
         })[0]
       : null;
+    var url = form.url.value.trim();
+    if (url === "https://" || url === "http://") url = "";
     var fields = {
       id: id || undefined,
       created: existing ? existing.created : undefined,
       title: form.title.value.trim(),
       username: form.username.value.trim(),
       password: form.password.value,
-      url: form.url.value.trim(),
+      url: url,
       notes: form.notes.value
     };
     Vault.put(fields).then(function () {
@@ -435,14 +490,17 @@
   function copyValue(value, isPassword) {
     if (!navigator.clipboard) return;
     navigator.clipboard.writeText(value).then(function () {
-      toast(isPassword ? "Password copied — clears in 20s" : "Copied");
-      if (isPassword) {
+      var ms = clipClearMs();
+      if (isPassword && ms > 0) {
+        toast("Password copied — clears in " + ms / 1000 + "s");
         clearTimeout(clipTimer);
         clipTimer = setTimeout(function () {
           // Best effort: overwrite the clipboard so a copied secret doesn't
           // linger. Can't verify it's still ours without a read prompt.
           navigator.clipboard.writeText("").catch(function () {});
-        }, CLIP_CLEAR_MS);
+        }, ms);
+      } else {
+        toast("Copied");
       }
     });
   }
@@ -501,7 +559,23 @@
       searchTerm = "";
       renderList();
     }
+    syncSettingsControls();
   });
+  document.body.addEventListener("htmx:historyRestore", syncSettingsControls);
+
+  // Reflect saved preferences whenever the Settings fragment arrives.
+  function syncSettingsControls() {
+    var sel = byId("clip-clear-select");
+    if (sel) sel.value = String(clipClearMs() / 1000);
+    if (window.Sync) {
+      var en = byId("sync-enable");
+      if (en) en.checked = Sync.isEnabled();
+      var tok = byId("sync-token");
+      if (tok) tok.value = Sync.getToken();
+      var st = byId("sync-status");
+      if (st) st.textContent = Sync.getStatus().message || "";
+    }
+  }
 
   // Modal (persistent chrome) via delegation on the modal root.
   var modalEl = byId("record-modal");
@@ -532,6 +606,14 @@
         span.classList.add("masked");
         reveal.textContent = "👁";
       }
+      return;
+    }
+    var openBtn = e.target.closest("[data-open]");
+    if (openBtn) {
+      var urlNode = openBtn.parentNode.querySelector(".field-value");
+      var href = urlNode.textContent;
+      if (href && !/^https?:\/\//i.test(href)) href = "https://" + href;
+      if (href) window.open(href, "_blank", "noopener,noreferrer");
       return;
     }
     var copy = e.target.closest("[data-copy]");
@@ -567,6 +649,10 @@
       lockNow();
       return;
     }
+    if (e.target.closest("#sync-now")) {
+      if (window.Sync) Sync.syncNow();
+      return;
+    }
     if (e.target.closest("#export-btn")) {
       Vault.exportVault().then(function (blob) {
         var url = URL.createObjectURL(blob);
@@ -586,6 +672,25 @@
   });
 
   document.body.addEventListener("change", function (e) {
+    if (e.target.id === "clip-clear-select") {
+      try {
+        localStorage.setItem(CLIP_CLEAR_KEY, e.target.value);
+      } catch (err) {
+        /* setting applies for this session but won't persist */
+      }
+      return;
+    }
+    if (e.target.id === "sync-enable") {
+      if (window.Sync) Sync.setEnabled(e.target.checked);
+      return;
+    }
+    if (e.target.id === "sync-token") {
+      if (window.Sync) {
+        Sync.setToken(e.target.value.trim());
+        Sync.syncNow();
+      }
+      return;
+    }
     if (e.target.id !== "import-file") return;
     var file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -635,14 +740,146 @@
     });
   });
 
-  // Re-render the list when entries change under us (add/edit/delete/import).
-  Vault.onChange(function () {
-    if (Vault.isUnlocked()) loadEntries();
+  /* ==================== conflicts + sync status ==================== */
+
+  function showConflictBanner(n) {
+    var b = byId("conflict-banner");
+    if (!b) return;
+    if (n > 0) {
+      byId("conflict-banner-text").textContent =
+        n + " sync conflict" + (n > 1 ? "s" : "") + " — tap to resolve";
+      b.hidden = false;
+    } else {
+      b.hidden = true;
+    }
+  }
+
+  function refreshConflicts() {
+    if (!Vault.isUnlocked()) {
+      showConflictBanner(0);
+      return;
+    }
+    Vault.conflictCount().then(showConflictBanner);
+  }
+
+  function versionBlock(labelText, v) {
+    var rows = [el("div", { class: "field-label", text: labelText })];
+    if (!v) {
+      rows.push(el("div", { class: "cfx-note", text: "(unavailable)" }));
+    } else if (v.deleted) {
+      rows.push(el("div", { class: "cfx-note", text: "Deleted" }));
+    } else {
+      [
+        ["Title", v.title],
+        ["Username", v.username],
+        ["Password", v.password],
+        ["URL", v.url],
+        ["Notes", v.notes]
+      ].forEach(function (p) {
+        if (p[1]) rows.push(el("div", { class: "cfx-line", text: p[0] + ": " + p[1] }));
+      });
+    }
+    return el("div", { class: "cfx-side" }, rows);
+  }
+
+  function renderConflict(c) {
+    var title =
+      (c.mine && c.mine.title) || (c.theirs && c.theirs.title) || "(entry)";
+    return el("div", { class: "cfx", "data-cfx-id": c.id }, [
+      el("div", { class: "cfx-title", text: title }),
+      el("div", { class: "cfx-cols" }, [
+        versionBlock("This device", c.mine),
+        versionBlock("Server", c.theirs)
+      ]),
+      el("div", { class: "cfx-actions" }, [
+        el("button", { class: "btn", type: "button", "data-keep": "mine", text: "Keep this device" }),
+        el("button", { class: "btn btn-ghost", type: "button", "data-keep": "theirs", text: "Keep server" })
+      ])
+    ]);
+  }
+
+  function openConflictModal() {
+    if (!Vault.isUnlocked()) return;
+    Vault.listConflicts().then(function (conflicts) {
+      var card = byId("conflict-card");
+      card.innerHTML = "";
+      card.appendChild(
+        el("div", { class: "modal-head" }, [
+          el("h2", { class: "modal-title", text: "Resolve conflicts" }),
+          el("button", {
+            class: "icon-btn modal-close",
+            type: "button",
+            "data-cclose": "1",
+            "aria-label": "Close",
+            text: "✕"
+          })
+        ])
+      );
+      if (!conflicts.length) {
+        card.appendChild(el("p", { class: "card-note", text: "No conflicts remaining." }));
+      } else {
+        var body = el("div", { class: "modal-body" }, conflicts.map(renderConflict));
+        card.appendChild(body);
+      }
+      show(byId("conflict-modal"), true);
+      document.body.classList.add("modal-open");
+    });
+  }
+
+  function closeConflictModal() {
+    var m = byId("conflict-modal");
+    if (m && !m.hidden) {
+      m.hidden = true;
+      byId("conflict-card").innerHTML = "";
+    }
+    if (byId("record-modal").hidden) document.body.classList.remove("modal-open");
+  }
+
+  byId("conflict-banner").addEventListener("click", openConflictModal);
+
+  byId("conflict-modal").addEventListener("click", function (e) {
+    if (e.target.closest("[data-cclose]")) {
+      closeConflictModal();
+      return;
+    }
+    var keepBtn = e.target.closest("[data-keep]");
+    if (keepBtn) {
+      var wrap = keepBtn.closest("[data-cfx-id]");
+      var id = wrap.getAttribute("data-cfx-id");
+      var keep = keepBtn.getAttribute("data-keep");
+      Vault.resolveConflict(id, keep).then(function () {
+        if (window.Sync) Sync.syncSoon(); // push the resolution
+        openConflictModal(); // re-render remaining
+      });
+    }
   });
 
-  // Close the modal on Escape.
+  // Live sync status -> conflict banner + Settings status line.
+  if (window.Sync) {
+    Sync.onStatus(function (s) {
+      showConflictBanner(s.conflicts || 0);
+      var el2 = byId("sync-status");
+      if (el2) el2.textContent = s.message || "";
+    });
+  }
+
+  /* ==================== change + escape wiring ==================== */
+
+  // Re-render the list when entries change under us (add/edit/delete/sync),
+  // and schedule a push of local changes.
+  Vault.onChange(function () {
+    if (Vault.isUnlocked()) {
+      loadEntries();
+      refreshConflicts();
+    }
+    if (window.Sync) Sync.syncSoon();
+  });
+
+  // Close modals on Escape.
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && !byId("record-modal").hidden) closeModal();
+    if (e.key !== "Escape") return;
+    if (!byId("conflict-modal").hidden) closeConflictModal();
+    else if (!byId("record-modal").hidden) closeModal();
   });
 
   startGate();

@@ -9,7 +9,7 @@
  * Bump VERSION to force old caches to be discarded on the next visit.
  */
 
-var VERSION = "ownvault-v1";
+var VERSION = "ownvault-v2";
 
 // How long to wait for the server before falling back to cache. An
 // unreachable host (machine asleep / other network) doesn't refuse the
@@ -39,6 +39,7 @@ var PRECACHE = [
   "/css/style.css",
   "/js/app.js",
   "/js/vault.js",
+  "/js/sync.js",
   "/js/vaultui.js",
   "/js/htmx.min.js",
   "/pages/passwords.html",
@@ -93,6 +94,10 @@ self.addEventListener("fetch", function (e) {
   // Never intercept the SSE stream: it's an infinite response, and it is
   // the client's reachability probe — it must hit the network directly.
   if (url.pathname === "/events") return;
+
+  // Never cache the sync API — it must always hit the network (and stale
+  // ciphertext served offline would corrupt the merge cursor logic).
+  if (url.pathname.indexOf("/api/") === 0) return;
 
   // Every app route (/dashboard, /profile, ...) is served as the shell,
   // so cache and match all navigations under "/".

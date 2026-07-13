@@ -80,14 +80,27 @@
     </div>
   </div>
 
+  <!-- Persistent sync-conflict indicator; stays until every conflict is
+       resolved. vaultui.js toggles it and fills the count. -->
+  <button id="conflict-banner" class="conflict-banner" type="button" hidden>
+    <span id="conflict-banner-text">Sync conflicts need your attention</span>
+  </button>
+
   <!-- Record modal: view / add / edit, populated by vaultui.js -->
   <div id="record-modal" class="modal" hidden>
     <div class="modal-overlay" data-close="1"></div>
     <div id="modal-card" class="modal-card" role="dialog" aria-modal="true"></div>
   </div>
 
+  <!-- Conflict-resolution modal, populated by vaultui.js -->
+  <div id="conflict-modal" class="modal" hidden>
+    <div class="modal-overlay" data-cclose="1"></div>
+    <div id="conflict-card" class="modal-card" role="dialog" aria-modal="true"></div>
+  </div>
+
   <script src="/js/htmx.min.js"></script>
   <script src="/js/vault.js"></script>
+  <script src="/js/sync.js"></script>
   <script src="/js/app.js"></script>
   <script src="/js/vaultui.js"></script>
 </body>

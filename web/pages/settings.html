@@ -5,6 +5,17 @@
     <h2 class="card-title">Vault</h2>
     <button id="lock-btn" class="btn" type="button">Lock now</button>
 
+    <label class="setting-row">
+      <span>Clear copied password after</span>
+      <select id="clip-clear-select">
+        <option value="10">10 seconds</option>
+        <option value="20">20 seconds</option>
+        <option value="30">30 seconds</option>
+        <option value="60">1 minute</option>
+        <option value="0">Never</option>
+      </select>
+    </label>
+
     <form id="change-pw-form" class="stack">
       <h3 class="card-subtitle">Change master password</h3>
       <input class="form-input" type="password" name="old" placeholder="Current password" autocomplete="current-password">
@@ -13,6 +24,26 @@
       <p id="change-pw-msg" class="form-msg" hidden></p>
       <button class="btn" type="submit">Change password</button>
     </form>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">Sync</h2>
+    <p class="card-note">Sync across devices through the Go server that served
+      this app. Everything is end-to-end encrypted — the server only ever
+      stores ciphertext.</p>
+    <label class="setting-row">
+      <span>Enable sync</span>
+      <input id="sync-enable" type="checkbox">
+    </label>
+    <label class="form-row">
+      <span class="form-label">Access token (only if your server requires one)</span>
+      <input id="sync-token" class="form-input" type="password" autocomplete="off"
+             placeholder="leave blank for local / LAN">
+    </label>
+    <div class="sync-row">
+      <button id="sync-now" class="btn" type="button">Sync now</button>
+      <span id="sync-status" class="sync-status" role="status"></span>
+    </div>
   </div>
 
   <div class="card">

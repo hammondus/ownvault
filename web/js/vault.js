@@ -235,6 +235,7 @@ window.Vault = (function () {
       var payload = JSON.parse(utf8Decode(bytes));
       payload.id = env.id;
       payload.updatedAt = env.updatedAt;
+      payload.conflict = !!env.conflict;
       return payload;
     });
   }
@@ -279,7 +280,11 @@ window.Vault = (function () {
       if (exists) throw new Error("vault already initialized");
       var rawVaultKey = randomBytes(32);
       return wrapVaultKey(rawVaultKey, password)
-        .then(metaPut)
+        .then(function (record) {
+          record.rev = 0;
+          record.dirty = true; // needs pushing to the server on first sync
+          return metaPut(record);
+        })
         .then(function () {
           return importVaultKey(rawVaultKey);
         })
@@ -322,11 +327,15 @@ window.Vault = (function () {
       if (!record) throw new Error("vault not initialized");
       return unwrapVaultKey(record, oldPassword).then(
         function (rawVaultKey) {
-          return wrapVaultKey(rawVaultKey, newPassword).then(metaPut).then(
-            function () {
+          return wrapVaultKey(rawVaultKey, newPassword)
+            .then(function (newRecord) {
+              newRecord.rev = record.rev || 0;
+              newRecord.dirty = true; // re-wrapped record must sync out
+              return metaPut(newRecord);
+            })
+            .then(function () {
               return true;
-            }
-          );
+            });
         },
         function () {
           return false; // old password wrong
@@ -342,7 +351,17 @@ window.Vault = (function () {
       var live = envs.filter(function (e) {
         return !e.deleted;
       });
-      return Promise.all(live.map(decryptEnvelope));
+      // Skip anything that won't decrypt (e.g. foreign data pulled from a
+      // shared server) rather than failing the whole list.
+      return Promise.all(
+        live.map(function (e) {
+          return decryptEnvelope(e).catch(function () {
+            return null;
+          });
+        })
+      ).then(function (rows) {
+        return rows.filter(Boolean);
+      });
     });
   }
 
@@ -356,9 +375,11 @@ window.Vault = (function () {
 
   // Create (no id) or update (id present). Stamps created/modified inside the
   // encrypted payload and updatedAt on the envelope (server-visible for sync).
+  // Marks the entry dirty and keeps its existing rev as the sync base.
   function put(fields) {
     requireUnlocked();
     var now = Date.now();
+    var isNew = !fields.id;
     var id = fields.id || (window.crypto.randomUUID
       ? window.crypto.randomUUID()
       : b64encode(randomBytes(16)));
@@ -371,34 +392,47 @@ window.Vault = (function () {
       created: fields.created || now,
       modified: now
     };
-    return encryptPayload(payload).then(function (enc) {
-      var env = {
-        id: id,
-        iv: enc.iv,
-        ciphertext: enc.ciphertext,
-        updatedAt: now,
-        deleted: false
-      };
-      return entryPutRaw(env).then(function () {
-        notifyChanged();
-        payload.id = id;
-        payload.updatedAt = now;
-        return payload;
+    var priorP = isNew ? Promise.resolve(null) : entryGetRaw(id);
+    return priorP.then(function (prior) {
+      return encryptPayload(payload).then(function (enc) {
+        var env = {
+          id: id,
+          iv: enc.iv,
+          ciphertext: enc.ciphertext,
+          updatedAt: now,
+          deleted: false,
+          rev: prior ? prior.rev || 0 : 0,
+          dirty: true,
+          conflict: false,
+          remote: null
+        };
+        return entryPutRaw(env).then(function () {
+          notifyChanged();
+          payload.id = id;
+          payload.updatedAt = now;
+          return payload;
+        });
       });
     });
   }
 
   // Tombstone: keep id + updatedAt + deleted so the delete can sync; drop the
-  // ciphertext so no plaintext lingers.
+  // ciphertext so no plaintext lingers. Preserves rev as the sync base.
   function remove(id) {
     requireUnlocked();
-    return entryPutRaw({
-      id: id,
-      iv: null,
-      ciphertext: null,
-      updatedAt: Date.now(),
-      deleted: true
-    }).then(notifyChanged);
+    return entryGetRaw(id).then(function (prior) {
+      return entryPutRaw({
+        id: id,
+        iv: null,
+        ciphertext: null,
+        updatedAt: Date.now(),
+        deleted: true,
+        rev: prior ? prior.rev || 0 : 0,
+        dirty: true,
+        conflict: false,
+        remote: null
+      }).then(notifyChanged);
+    });
   }
 
   // Full encrypted snapshot: the wrapped-key record plus every envelope, all
@@ -491,6 +525,230 @@ window.Vault = (function () {
     changeCb = cb;
   }
 
+  /* ==================== sync support ==================== */
+  // These operate on raw envelopes and speak base64 over the wire, so the
+  // sync engine (sync.js) never has to touch binary or crypto. The server
+  // only ever sees ciphertext + server-assigned revs.
+
+  var CURSOR_KEY = "syncCursor"; // not secret: highest server rev pulled
+
+  function getCursor() {
+    try {
+      return parseInt(localStorage.getItem(CURSOR_KEY), 10) || 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function setCursor(rev) {
+    try {
+      localStorage.setItem(CURSOR_KEY, String(rev || 0));
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function envToDTO(env) {
+    return {
+      id: env.id,
+      iv: env.iv ? b64encode(env.iv) : "",
+      ciphertext: env.ciphertext ? b64encode(env.ciphertext) : "",
+      updatedAt: env.updatedAt,
+      deleted: !!env.deleted,
+      rev: env.rev || 0
+    };
+  }
+
+  function dtoToEnv(dto) {
+    return {
+      id: dto.id,
+      iv: dto.iv ? b64decode(dto.iv) : null,
+      ciphertext: dto.ciphertext ? b64decode(dto.ciphertext) : null,
+      updatedAt: dto.updatedAt,
+      deleted: !!dto.deleted,
+      rev: dto.rev || 0
+    };
+  }
+
+  // Dirty, non-conflicted entries to push, each tagged with its base rev.
+  function pendingPush() {
+    return entriesGetAll().then(function (envs) {
+      return envs
+        .filter(function (e) {
+          return e.dirty && !e.conflict;
+        })
+        .map(function (e) {
+          var dto = envToDTO(e);
+          dto.base = e.rev || 0;
+          return dto;
+        });
+    });
+  }
+
+  // Apply push results: ok -> clean at the new rev; conflict -> stash the
+  // server's version for the user to resolve (local edit stays dirty).
+  function confirmPushed(results) {
+    return Promise.all(
+      (results || []).map(function (res) {
+        return entryGetRaw(res.id).then(function (env) {
+          if (!env) return;
+          if (res.status === "ok") {
+            env.rev = res.rev;
+            env.dirty = false;
+            env.conflict = false;
+            env.remote = null;
+          } else if (res.status === "conflict") {
+            env.conflict = true;
+            env.remote = res.server || null;
+          }
+          return entryPutRaw(env);
+        });
+      })
+    ).then(notifyChanged);
+  }
+
+  // Merge pulled remote entries. Silent unless the same entry is dirty locally
+  // against a different base rev, which becomes a conflict.
+  function applyPulled(remoteDTOs) {
+    return entriesGetAll().then(function (envs) {
+      var byId = {};
+      envs.forEach(function (e) {
+        byId[e.id] = e;
+      });
+      var ops = (remoteDTOs || []).map(function (dto) {
+        var local = byId[dto.id];
+        if (!local) {
+          var fresh = dtoToEnv(dto);
+          fresh.dirty = false;
+          fresh.conflict = false;
+          fresh.remote = null;
+          return entryPutRaw(fresh);
+        }
+        if (!local.dirty) {
+          if ((dto.rev || 0) <= (local.rev || 0)) return Promise.resolve();
+          var upd = dtoToEnv(dto);
+          upd.dirty = false;
+          upd.conflict = false;
+          upd.remote = null;
+          return entryPutRaw(upd);
+        }
+        // local is a pending local edit
+        if ((dto.rev || 0) === (local.rev || 0)) return Promise.resolve();
+        local.conflict = true;
+        local.remote = dto;
+        return entryPutRaw(local);
+      });
+      return Promise.all(ops).then(notifyChanged);
+    });
+  }
+
+  function metaToDoc(record) {
+    return {
+      v: record.v,
+      salt: b64encode(record.salt),
+      iterations: record.iterations,
+      wrapIv: b64encode(record.wrapIv),
+      wrapped: b64encode(record.wrapped)
+    };
+  }
+
+  function docToMeta(doc) {
+    return {
+      v: doc.v || 1,
+      salt: b64decode(doc.salt),
+      iterations: doc.iterations,
+      wrapIv: b64decode(doc.wrapIv),
+      wrapped: b64decode(doc.wrapped)
+    };
+  }
+
+  // The wrapped-key record to push if it hasn't been synced yet, else null.
+  function pendingMeta() {
+    return metaGet().then(function (r) {
+      return r && r.dirty ? metaToDoc(r) : null;
+    });
+  }
+
+  function confirmMetaPushed(rev) {
+    return metaGet().then(function (r) {
+      if (!r) return;
+      r.rev = rev;
+      r.dirty = false;
+      return metaPut(r);
+    });
+  }
+
+  // Install a wrapped-key record pulled from the server (fresh-device
+  // bootstrap, or a password change made on another device).
+  function applyMeta(doc, rev) {
+    var rec = docToMeta(doc);
+    rec.rev = rev;
+    rec.dirty = false;
+    return metaPut(rec);
+  }
+
+  function conflictCount() {
+    return entriesGetAll().then(function (envs) {
+      return envs.filter(function (e) {
+        return e.conflict;
+      }).length;
+    });
+  }
+
+  // Decrypted mine/theirs pairs for every unresolved conflict.
+  function listConflicts() {
+    requireUnlocked();
+    return entriesGetAll().then(function (envs) {
+      var conflicted = envs.filter(function (e) {
+        return e.conflict && e.remote;
+      });
+      return Promise.all(
+        conflicted.map(function (e) {
+          var mineP = e.deleted
+            ? Promise.resolve({ deleted: true })
+            : decryptEnvelope(e).catch(function () {
+                return null;
+              });
+          var remoteEnv = dtoToEnv(e.remote);
+          var theirsP = remoteEnv.deleted
+            ? Promise.resolve({ deleted: true })
+            : aesDecrypt(vaultKey, remoteEnv.iv, remoteEnv.ciphertext)
+                .then(function (b) {
+                  return JSON.parse(utf8Decode(b));
+                })
+                .catch(function () {
+                  return null;
+                });
+          return Promise.all([mineP, theirsP]).then(function (r) {
+            return { id: e.id, mine: r[0], theirs: r[1] };
+          });
+        })
+      );
+    });
+  }
+
+  // keep = "mine" rebases the local edit onto the server's rev so the next
+  // push is accepted; keep = "theirs" takes the server version verbatim.
+  function resolveConflict(id, keep) {
+    requireUnlocked();
+    return entryGetRaw(id).then(function (env) {
+      if (!env || !env.conflict) return;
+      var remoteRev = env.remote ? env.remote.rev || 0 : env.rev || 0;
+      if (keep === "theirs") {
+        var upd = dtoToEnv(env.remote);
+        upd.dirty = false;
+        upd.conflict = false;
+        upd.remote = null;
+        return entryPutRaw(upd).then(notifyChanged);
+      }
+      env.rev = remoteRev;
+      env.dirty = true;
+      env.conflict = false;
+      env.remote = null;
+      return entryPutRaw(env).then(notifyChanged);
+    });
+  }
+
   return {
     isInitialized: isInitialized,
     isUnlocked: isUnlocked,
@@ -504,6 +762,18 @@ window.Vault = (function () {
     remove: remove,
     exportVault: exportVault,
     importVault: importVault,
-    onChange: onChange
+    onChange: onChange,
+    // sync
+    getCursor: getCursor,
+    setCursor: setCursor,
+    pendingPush: pendingPush,
+    confirmPushed: confirmPushed,
+    applyPulled: applyPulled,
+    pendingMeta: pendingMeta,
+    confirmMetaPushed: confirmMetaPushed,
+    applyMeta: applyMeta,
+    conflictCount: conflictCount,
+    listConflicts: listConflicts,
+    resolveConflict: resolveConflict
   };
 })();

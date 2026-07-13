@@ -130,7 +130,10 @@ for the record.
 
 The username, password and url fields have an icon to copy their contents
 to the clipboard. Copying the password wipes the clipboard automatically after
-a short delay (~20s). This delay can be changed by the user.
+a short delay (~20s). This delay can be changed by the user (Settings).
+The url field additionally has an icon to open it in a new browser tab, and new
+entries pre-fill the url with `https://` to save typing (a bare scheme is
+treated as empty on save).
 In the modal the password is masked by default with a reveal (show/hide) toggle.
 
 Supporting flows the above depends on:
@@ -143,6 +146,18 @@ Supporting flows the above depends on:
 - **Auto-lock**: the vault re-locks after a period of inactivity and via an
   explicit lock button, requiring the master password again.
 
+
+# Public Use
+As the server is zero trust, if you want public sync on your devices, you can
+set up your own, or, with their permission, use someone elses.
+Various people can share a server, and they don't have to trust one another.
+At no point does the server ever see unencrypted data. It's simply a portal
+to sync through.
+It uses such little resources than many people can share a server on a very
+low powered machine.
+
+
+
 # PWA Template
 ## Commands
 This repo is a GitHub *template* for PWA apps with a hamburger menu. All
@@ -150,13 +165,21 @@ name-specific strings use the placeholder "My App" / `myapp`; the README's
 "Using this template" section lists every file to touch when renaming for a
 new project — keep that list up to date if you add another.
 ```sh
-go run . -dev                 # development: serves web/ from disk, so edit + refresh (no rebuild)
-go build -o ownvault .      # production: single binary with web/ embedded via go:embed
-./ownvault -addr :3000      # default addr is :8080
+go run . -dev                       # development: serves web/ from disk, so edit + refresh (no rebuild)
+go run . -dev -db /tmp/vault.db     # dev with an explicit sync DB (dev exe is temp, so pass -db)
+go build -o ownvault .              # production: single binary with web/ embedded via go:embed
+./ownvault -addr :3000              # default addr is :8080
+./ownvault -token "$(openssl rand -hex 16)"   # public deployment: require a shared-secret token
 ```
 
+`-db` sets the SQLite sync database (default: `ownvault.db` next to the
+executable). `-token` (or env `OWNVAULT_TOKEN`) requires that shared secret on
+all `/api/*` calls — set it for any public/internet-reachable deployment.
+
 There are no tests or linters configured. `web/` files are embedded at build
-time, so changes to them require a rebuild unless running with `-dev`.
+time, so changes to them require a rebuild unless running with `-dev`. The Go
+sync layer uses the pure-Go `modernc.org/sqlite` driver (no CGo), so
+cross-compilation and the single-binary story are preserved.
 
 If `certs/cert.pem` + `certs/key.pem` exist (generated with mkcert for the
 user's LAN IPs), the server also listens on HTTPS at `-tlsaddr` (default
@@ -172,7 +195,8 @@ htmx 2.x is vendored at `web/js/htmx.min.js`.
 **Routing spans three files that must stay consistent:**
 
 - `main.go` serves any path that matches a real file under `web/`; every other
-  path (`/dashboard`, `/profile`, ...) returns the shell `web/index.html`.
+  path (`/settings`, `/about`, ...) returns the shell `web/index.html`. The
+  `/api/*` sync endpoints and `/events` are handled before that catch-all.
 - Nav links in `web/index.html` carry `hx-get="/pages/<name>.html"` (the
   fragment htmx swaps into `<main>`) plus `hx-push-url="/<name>"` and
   `data-title`. The plain `href` is the no-JS fallback.
@@ -210,7 +234,30 @@ from the EventSource connection state plus htmx request outcomes and
 offline ribbon via `body.offline`). Future push features should reuse this
 stream: emit named events in the `/events` handler, listen in app.js. The
 service worker deliberately bypasses `/events` (infinite response — caching
-it would hang) and must keep doing so.
+it would hang) and must keep doing so. The service worker also bypasses
+`/api/*` — sync must always hit the network, never a stale cache.
+
+**Sync (the Own Vault layer)** — three JS files with a strict separation:
+
+- `web/js/vault.js` owns *all* crypto and IndexedDB. DOM-free, so it can back
+  a browser extension later. Each entry envelope is `{id, iv, ciphertext,
+  updatedAt, deleted, rev, dirty, conflict, remote}`: `rev` is the last
+  server revision seen (the sync base), `dirty` marks unpushed local edits,
+  `conflict`/`remote` hold a divergence pending user resolution. It exposes
+  sync helpers that speak base64 (`pendingPush`, `applyPulled`, `confirmPushed`,
+  meta doc get/set, cursor, `listConflicts`, `resolveConflict`) so the sync
+  engine never touches binary or keys.
+- `web/js/sync.js` is HTTP-only orchestration: `pull` (since a cursor) then
+  `push` (optimistic concurrency), triggered on unlock, on local change
+  (debounced), on an SSE `changed` event, or manually. Config in localStorage
+  (`syncEnabled`, `syncToken`); URLs are same-origin.
+- `web/js/vaultui.js` is all the DOM glue (lock gate, list/search, record
+  modal, conflict banner + resolution modal, settings controls).
+- `main.go` stores only ciphertext in SQLite, assigns a monotonic `rev` per
+  write, and on `/api/push` accepts an entry only if the server's current rev
+  still equals the client's `base` (else it returns the server's version as a
+  conflict). It broadcasts a `changed` SSE event after any accepted write.
+  Zero-knowledge holds: `rev` is the only server-managed metadata.
 
 ## Conventions
 
