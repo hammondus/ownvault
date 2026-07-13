@@ -41,19 +41,23 @@ var embedded embed.FS
 
 /* ==================== SSE broadcast hub ==================== */
 
-// Fans "changed" notifications out to every connected client so other devices
-// re-pull promptly. Keepalive pings share the same stream.
+// Fans "changed" notifications out to the clients watching a given vault so
+// their other devices re-pull promptly. Each subscriber is tagged with the
+// vault id it cares about, so one person's write never wakes an unrelated
+// vault's clients on a shared server. Keepalive pings are per-connection (in
+// the /events handler) and reach everyone regardless of tag — a reachability
+// probe with no vault subscribes with the empty tag and still gets them.
 type hub struct {
 	mu      sync.Mutex
-	clients map[chan string]struct{}
+	clients map[chan string]string // channel -> vault id it watches
 }
 
-func newHub() *hub { return &hub{clients: make(map[chan string]struct{})} }
+func newHub() *hub { return &hub{clients: make(map[chan string]string)} }
 
-func (h *hub) add() chan string {
+func (h *hub) add(vault string) chan string {
 	ch := make(chan string, 8)
 	h.mu.Lock()
-	h.clients[ch] = struct{}{}
+	h.clients[ch] = vault
 	h.mu.Unlock()
 	return ch
 }
@@ -67,9 +71,12 @@ func (h *hub) remove(ch chan string) {
 	h.mu.Unlock()
 }
 
-func (h *hub) broadcast(msg string) {
+func (h *hub) broadcast(vault, msg string) {
 	h.mu.Lock()
-	for ch := range h.clients {
+	for ch, v := range h.clients {
+		if v != vault {
+			continue
+		}
 		select {
 		case ch <- msg:
 		default: // slow client: drop; it will full-pull on its next sync
@@ -92,22 +99,48 @@ func openStore(path string) (*store, error) {
 	// modernc's driver is fine concurrently, but a single writer connection
 	// sidesteps SQLite "database is locked" under our low, bursty load.
 	db.SetMaxOpenConns(1)
+
+	// Refuse to open a pre-namespacing database rather than silently ignoring
+	// its data: the old schema had one global vault (entries keyed by id alone,
+	// a single meta row). Those rows have no vault_id to migrate them under, so
+	// we stop with a clear message instead of corrupting anything.
+	var legacy int
+	_ = db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='entries'`).Scan(&legacy)
+	if legacy > 0 {
+		var hasVID int
+		_ = db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('entries') WHERE name='vault_id'`).Scan(&hasVID)
+		if hasVID == 0 {
+			return nil, fmt.Errorf(
+				"database %s uses the old single-vault schema; move it aside or start with a fresh -db path", path)
+		}
+	}
+
+	// Every row is scoped by vault_id — the opaque per-vault namespace the
+	// client sends on each call. Separate people (or an unrelated vault on the
+	// same device) get separate rev sequences, meta, and entries; the server
+	// still only ever sees ciphertext + server-assigned revs.
 	schema := `
-CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v INTEGER NOT NULL);
-INSERT OR IGNORE INTO kv (k, v) VALUES ('rev', 0);
+CREATE TABLE IF NOT EXISTS revs (
+  vault_id TEXT PRIMARY KEY,
+  rev      INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS entries (
-  id         TEXT PRIMARY KEY,
+  vault_id   TEXT NOT NULL,
+  id         TEXT NOT NULL,
   iv         BLOB,
   ciphertext BLOB,
   updated_at INTEGER NOT NULL,
   deleted    INTEGER NOT NULL DEFAULT 0,
-  rev        INTEGER NOT NULL
+  rev        INTEGER NOT NULL,
+  PRIMARY KEY (vault_id, id)
 );
-CREATE INDEX IF NOT EXISTS idx_entries_rev ON entries(rev);
+CREATE INDEX IF NOT EXISTS idx_entries_vault_rev ON entries(vault_id, rev);
 CREATE TABLE IF NOT EXISTS meta (
-  id  INTEGER PRIMARY KEY CHECK (id = 1),
-  doc TEXT NOT NULL,
-  rev INTEGER NOT NULL
+  vault_id TEXT PRIMARY KEY,
+  doc      TEXT NOT NULL,
+  rev      INTEGER NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
@@ -115,21 +148,28 @@ CREATE TABLE IF NOT EXISTS meta (
 	return &store{db: db}, nil
 }
 
-// nextRev bumps and returns the global revision counter within a transaction.
-func nextRev(tx *sql.Tx) (int64, error) {
-	if _, err := tx.Exec(`UPDATE kv SET v = v + 1 WHERE k = 'rev'`); err != nil {
+// nextRev bumps and returns a vault's private revision counter within a
+// transaction. Each vault_id has its own monotonic sequence, so one person's
+// writes never advance another's cursor.
+func nextRev(tx *sql.Tx, vault string) (int64, error) {
+	if _, err := tx.Exec(
+		`INSERT INTO revs (vault_id, rev) VALUES (?, 1)
+		 ON CONFLICT(vault_id) DO UPDATE SET rev = rev + 1`, vault); err != nil {
 		return 0, err
 	}
 	var rev int64
-	if err := tx.QueryRow(`SELECT v FROM kv WHERE k = 'rev'`).Scan(&rev); err != nil {
+	if err := tx.QueryRow(`SELECT rev FROM revs WHERE vault_id = ?`, vault).Scan(&rev); err != nil {
 		return 0, err
 	}
 	return rev, nil
 }
 
-func (s *store) maxRev() (int64, error) {
+func (s *store) maxRev(vault string) (int64, error) {
 	var rev int64
-	err := s.db.QueryRow(`SELECT v FROM kv WHERE k = 'rev'`).Scan(&rev)
+	err := s.db.QueryRow(`SELECT rev FROM revs WHERE vault_id = ?`, vault).Scan(&rev)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
 	return rev, err
 }
 
@@ -218,7 +258,10 @@ func main() {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-store")
 
-		ch := h.add()
+		// ?vault=<id> scopes the "changed" notifications to one vault. The
+		// reachability probe in app.js connects without it and just rides the
+		// keepalive pings below.
+		ch := h.add(strings.TrimSpace(r.URL.Query().Get("vault")))
 		defer h.remove(ch)
 
 		fmt.Fprintf(w, "retry: 3000\n\nevent: ping\ndata: {}\n\n")
@@ -307,30 +350,59 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// vaultID reads the opaque per-vault namespace key the client sends on every
+// sync call (X-Vault-Id). It scopes all storage so unrelated people can share
+// one server without seeing each other's (already encrypted) data. It is not a
+// secret and never decrypts anything — the shared token, if configured, is the
+// access gate; the vault id only says which partition to read or write.
+func vaultID(r *http.Request) string {
+	return strings.TrimSpace(r.Header.Get("X-Vault-Id"))
+}
+
+// requireVault resolves the namespace for handlers that read or write vault
+// data, rejecting a missing or absurd id. Writes it out and returns ok=false
+// when invalid so the caller can just return.
+func requireVault(w http.ResponseWriter, r *http.Request) (string, bool) {
+	v := vaultID(r)
+	if v == "" || len(v) > 200 {
+		http.Error(w, "missing or invalid vault id", http.StatusBadRequest)
+		return "", false
+	}
+	return v, true
+}
+
 /* ==================== handlers ==================== */
 
+// A light probe (reachability / auth check). Reports the caller's own vault
+// only; with no vault id it just confirms the server is up and the token (if
+// any) was accepted.
 func (s *store) handleState(w http.ResponseWriter, r *http.Request) {
-	rev, err := s.maxRev()
+	v := vaultID(r)
+	rev, err := s.maxRev(v)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	var hasMeta bool
 	var n int
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM meta`).Scan(&n)
-	hasMeta = n > 0
-	writeJSON(w, map[string]any{"rev": rev, "hasMeta": hasMeta})
+	if v != "" {
+		_ = s.db.QueryRow(`SELECT COUNT(*) FROM meta WHERE vault_id = ?`, v).Scan(&n)
+	}
+	writeJSON(w, map[string]any{"rev": rev, "hasMeta": n > 0})
 }
 
 // GET returns the wrapped-key record (for a fresh device to bootstrap).
 // PUT stores it (first device, or a master-password change re-wrap).
 func (s *store) handleMeta(h *hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		vault, ok := requireVault(w, r)
+		if !ok {
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			var doc string
 			var rev int64
-			err := s.db.QueryRow(`SELECT doc, rev FROM meta WHERE id = 1`).Scan(&doc, &rev)
+			err := s.db.QueryRow(`SELECT doc, rev FROM meta WHERE vault_id = ?`, vault).Scan(&doc, &rev)
 			if err == sql.ErrNoRows {
 				http.Error(w, "no meta", http.StatusNotFound)
 				return
@@ -355,15 +427,15 @@ func (s *store) handleMeta(h *hub) http.HandlerFunc {
 				return
 			}
 			defer tx.Rollback()
-			rev, err := nextRev(tx)
+			rev, err := nextRev(tx, vault)
 			if err != nil {
 				http.Error(w, err.Error(), 500)
 				return
 			}
 			if _, err := tx.Exec(
-				`INSERT INTO meta (id, doc, rev) VALUES (1, ?, ?)
-				 ON CONFLICT(id) DO UPDATE SET doc = excluded.doc, rev = excluded.rev`,
-				string(body.Doc), rev); err != nil {
+				`INSERT INTO meta (vault_id, doc, rev) VALUES (?, ?, ?)
+				 ON CONFLICT(vault_id) DO UPDATE SET doc = excluded.doc, rev = excluded.rev`,
+				vault, string(body.Doc), rev); err != nil {
 				http.Error(w, err.Error(), 500)
 				return
 			}
@@ -371,7 +443,7 @@ func (s *store) handleMeta(h *hub) http.HandlerFunc {
 				http.Error(w, err.Error(), 500)
 				return
 			}
-			h.broadcast(fmt.Sprintf(`{"rev":%d}`, rev))
+			h.broadcast(vault, fmt.Sprintf(`{"rev":%d}`, rev))
 			writeJSON(w, map[string]any{"rev": rev})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -382,11 +454,15 @@ func (s *store) handleMeta(h *hub) http.HandlerFunc {
 // GET /api/pull?since=<rev>: everything with rev > since, plus meta if it
 // changed past since, plus the current server rev (the client's new cursor).
 func (s *store) handlePull(w http.ResponseWriter, r *http.Request) {
+	vault, ok := requireVault(w, r)
+	if !ok {
+		return
+	}
 	var since int64
 	fmt.Sscan(r.URL.Query().Get("since"), &since)
 
 	rows, err := s.db.Query(
-		`SELECT id, iv, ciphertext, updated_at, deleted, rev FROM entries WHERE rev > ? ORDER BY rev`, since)
+		`SELECT id, iv, ciphertext, updated_at, deleted, rev FROM entries WHERE vault_id = ? AND rev > ? ORDER BY rev`, vault, since)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -410,12 +486,12 @@ func (s *store) handlePull(w http.ResponseWriter, r *http.Request) {
 
 	var doc string
 	var metaRev int64
-	err = s.db.QueryRow(`SELECT doc, rev FROM meta WHERE id = 1`).Scan(&doc, &metaRev)
+	err = s.db.QueryRow(`SELECT doc, rev FROM meta WHERE vault_id = ?`, vault).Scan(&doc, &metaRev)
 	if err == nil && metaRev > since {
 		resp["meta"] = map[string]any{"doc": json.RawMessage(doc), "rev": metaRev}
 	}
 
-	rev, err := s.maxRev()
+	rev, err := s.maxRev(vault)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -430,6 +506,10 @@ func (s *store) handlePull(w http.ResponseWriter, r *http.Request) {
 // otherwise report a conflict with the server's current version.
 func (s *store) handlePush(h *hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		vault, ok := requireVault(w, r)
+		if !ok {
+			return
+		}
 		var body struct {
 			Entries []pushItem `json:"entries"`
 		}
@@ -456,7 +536,7 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 
 		for _, it := range body.Entries {
 			var curRev int64
-			err := tx.QueryRow(`SELECT rev FROM entries WHERE id = ?`, it.ID).Scan(&curRev)
+			err := tx.QueryRow(`SELECT rev FROM entries WHERE vault_id = ? AND id = ?`, vault, it.ID).Scan(&curRev)
 			if err == sql.ErrNoRows {
 				curRev = 0
 			} else if err != nil {
@@ -470,7 +550,7 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 				var iv, ct []byte
 				var del int
 				if scanErr := tx.QueryRow(
-					`SELECT id, iv, ciphertext, updated_at, deleted, rev FROM entries WHERE id = ?`, it.ID,
+					`SELECT id, iv, ciphertext, updated_at, deleted, rev FROM entries WHERE vault_id = ? AND id = ?`, vault, it.ID,
 				).Scan(&e.ID, &iv, &ct, &e.UpdatedAt, &del, &e.Rev); scanErr == nil {
 					e.IV, e.Ciphertext, e.Deleted = b64(iv), b64(ct), del != 0
 					results = append(results, result{ID: it.ID, Status: "conflict", Server: &e})
@@ -490,7 +570,7 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 				http.Error(w, "bad ciphertext", http.StatusBadRequest)
 				return
 			}
-			newRev, err := nextRev(tx)
+			newRev, err := nextRev(tx, vault)
 			if err != nil {
 				http.Error(w, err.Error(), 500)
 				return
@@ -500,13 +580,13 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 				del = 1
 			}
 			if _, err := tx.Exec(
-				`INSERT INTO entries (id, iv, ciphertext, updated_at, deleted, rev)
-				 VALUES (?, ?, ?, ?, ?, ?)
-				 ON CONFLICT(id) DO UPDATE SET
+				`INSERT INTO entries (vault_id, id, iv, ciphertext, updated_at, deleted, rev)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(vault_id, id) DO UPDATE SET
 				   iv = excluded.iv, ciphertext = excluded.ciphertext,
 				   updated_at = excluded.updated_at, deleted = excluded.deleted,
 				   rev = excluded.rev`,
-				it.ID, iv, ct, it.UpdatedAt, del, newRev); err != nil {
+				vault, it.ID, iv, ct, it.UpdatedAt, del, newRev); err != nil {
 				http.Error(w, err.Error(), 500)
 				return
 			}
@@ -519,9 +599,9 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 			return
 		}
 
-		rev, _ := s.maxRev()
+		rev, _ := s.maxRev(vault)
 		if changed {
-			h.broadcast(fmt.Sprintf(`{"rev":%d}`, rev))
+			h.broadcast(vault, fmt.Sprintf(`{"rev":%d}`, rev))
 		}
 		writeJSON(w, map[string]any{"rev": rev, "results": results})
 	}

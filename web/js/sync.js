@@ -11,13 +11,21 @@
  * notification from another device triggers a debounced re-sync.
  *
  * Config (localStorage, not secret-bearing beyond the shared token):
- *   syncEnabled ("0" disables), syncToken (bearer token for public servers).
+ *   syncEnabled ("0" disables), syncToken (bearer token for public servers),
+ *   vaultId (which namespace on the server this device's vault lives in).
+ *
+ * The vault id is the multi-tenant key: one server can hold many unrelated
+ * people's vaults, each under its own random id, and the server only ever sees
+ * that opaque id plus ciphertext. A new device joins an existing vault by being
+ * given its id (the connect step in vaultui.js); creating a vault mints a fresh
+ * one. It is sent as X-Vault-Id on every /api/* call.
  */
 window.Sync = (function () {
   "use strict";
 
   var ENABLED_KEY = "syncEnabled";
   var TOKEN_KEY = "syncToken";
+  var VAULT_KEY = "vaultId";
   var DEBOUNCE_MS = 600;
 
   var listeners = [];
@@ -67,6 +75,43 @@ window.Sync = (function () {
     }
   }
 
+  function getVaultId() {
+    try {
+      return localStorage.getItem(VAULT_KEY) || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function setVaultId(id) {
+    try {
+      localStorage.setItem(VAULT_KEY, id || "");
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  // A fresh random namespace for a brand-new vault. UUID where available (easy
+  // to read out to another device), random hex otherwise.
+  function newVaultId() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    var b = window.crypto.getRandomValues(new Uint8Array(16));
+    var s = "";
+    for (var i = 0; i < b.length; i++) s += ("0" + b[i].toString(16)).slice(-2);
+    return s;
+  }
+
+  // Guarantee this device has a vault id (used the moment a local vault exists
+  // so sync has a namespace to push into). Never overwrites an existing one.
+  function ensureVaultId() {
+    var id = getVaultId();
+    if (!id) {
+      id = newVaultId();
+      setVaultId(id);
+    }
+    return id;
+  }
+
   /* ---------- status ---------- */
 
   function onStatus(cb) {
@@ -94,6 +139,8 @@ window.Sync = (function () {
     var h = extra || {};
     var t = getToken();
     if (t) h["X-Vault-Token"] = t;
+    var v = getVaultId();
+    if (v) h["X-Vault-Id"] = v;
     return h;
   }
 
@@ -167,6 +214,13 @@ window.Sync = (function () {
   // status rather than an error.
   function syncNow() {
     if (!isEnabled()) return Promise.resolve();
+    // No namespace yet means nothing to sync against. A local vault always has
+    // one by the time it's unlocked (start() calls ensureVaultId), so this only
+    // skips the pre-vault gate states.
+    if (!getVaultId()) {
+      emit({ state: "idle", ok: true, message: "Sync not set up", conflicts: lastStatus.conflicts });
+      return Promise.resolve();
+    }
     if (syncing) {
       queued = true;
       return Promise.resolve();
@@ -239,7 +293,11 @@ window.Sync = (function () {
   function subscribe() {
     if (events || !isEnabled()) return;
     try {
-      events = new EventSource("/events");
+      // Scope change notifications to our vault so a shared server doesn't wake
+      // us for other people's writes. (app.js keeps a separate, unscoped
+      // EventSource purely for reachability.)
+      var vid = getVaultId();
+      events = new EventSource("/events" + (vid ? "?vault=" + encodeURIComponent(vid) : ""));
       events.addEventListener("changed", function () {
         syncSoon();
       });
@@ -262,9 +320,12 @@ window.Sync = (function () {
     }
   }
 
-  // Called after unlock.
+  // Called after unlock. By now a local vault exists, so guarantee it has a
+  // namespace (covers vaults created before namespacing, and offline-first
+  // vaults whose first sync is only being enabled now).
   function start() {
     if (!isEnabled()) return;
+    ensureVaultId();
     subscribe();
     syncNow();
   }
@@ -278,6 +339,10 @@ window.Sync = (function () {
     setEnabled: setEnabled,
     getToken: getToken,
     setToken: setToken,
+    getVaultId: getVaultId,
+    setVaultId: setVaultId,
+    newVaultId: newVaultId,
+    ensureVaultId: ensureVaultId,
     onStatus: onStatus,
     getStatus: getStatus,
     syncNow: syncNow,

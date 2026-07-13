@@ -40,6 +40,15 @@
       <input id="sync-token" class="form-input" type="password" autocomplete="off"
              placeholder="leave blank for local / LAN">
     </label>
+    <div class="form-row">
+      <span class="form-label">Vault ID — enter this on another device to sync it
+        to this vault</span>
+      <div class="sync-row">
+        <input id="vault-id" class="form-input" type="text" readonly autocomplete="off"
+               placeholder="(created with your vault)">
+        <button id="vault-id-copy" class="btn" type="button">Copy</button>
+      </div>
+    </div>
     <div class="sync-row">
       <button id="sync-now" class="btn" type="button">Sync now</button>
       <span id="sync-status" class="sync-status" role="status"></span>
