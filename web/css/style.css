@@ -406,6 +406,10 @@ body.locked {
   font-size: 0.9rem;
   text-align: center;
   cursor: text;
+  /* Trim the inherited horizontal padding a few px so the centered
+     monospace id isn't clipped at its edges. */
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
 .lock-hint {

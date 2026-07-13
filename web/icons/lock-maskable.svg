@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Own Vault">
+  <defs>
+    <linearGradient id="ovBodyM" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7cf62"/>
+      <stop offset="1" stop-color="#e0a026"/>
+    </linearGradient>
+    <linearGradient id="ovShackleM" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d7e0ea"/>
+      <stop offset="1" stop-color="#8b9bb0"/>
+    </linearGradient>
+  </defs>
+  <!-- Opaque midnight background fills the full bleed; the lock sits inside the
+       maskable safe zone (~80% centre) so platform masks never clip it. -->
+  <rect width="64" height="64" fill="#0a1f3b"/>
+  <g transform="translate(32 32) scale(0.66) translate(-32 -32)">
+    <path d="M20 30 V22 a12 12 0 0 1 24 0 V30"
+          fill="none" stroke="url(#ovShackleM)" stroke-width="6" stroke-linecap="round"/>
+    <rect x="14" y="29" width="36" height="27" rx="6" fill="url(#ovBodyM)"/>
+    <circle cx="32" cy="40" r="4.5" fill="#0a1f3b"/>
+    <rect x="30" y="41" width="4" height="9" rx="2" fill="#0a1f3b"/>
+  </g>
+</svg>

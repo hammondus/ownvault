@@ -327,10 +327,17 @@ it would hang) and must keep doing so. The service worker also bypasses
   in `web/js/app.js` (which drives the `<meta name="theme-color">`); both
   must stay in step, and `web/manifest.webmanifest` `theme_color` must match
   the midnight default.
-- `assets/logo.png` is a source asset, not served. The icons in
-  `web/icons/` are derived from it with `sips` (resize to ~66% width, pad to
-  square with white, flatten alpha via a JPEG round-trip — opaque + the
-  maskable safe zone matter for Android/iOS).
+- The app icon is a gold padlock (evoking the 🔐 lock-gate logo) on the
+  midnight background. `web/icons/lock.svg` is the source of truth: a
+  transparent-background version wired as the SVG favicon
+  (`<link rel="icon" type="image/svg+xml">`) and as an `any`-purpose manifest
+  icon. `web/icons/lock-maskable.svg` is the same lock on an opaque midnight
+  fill inside the ~66% maskable safe zone; the PNGs in `web/icons/`
+  (`icon-192`, `icon-512`, `apple-touch-icon` at 180px, flattened opaque) are
+  rasterised from it — no SVG rasteriser is installed, so render via
+  `qlmanage -t -s 1024` (bump the SVG's `width`/`height` to 1024 first so it
+  fills the square) then downscale with `sips`. `assets/logo.png` is an older
+  unused source asset, not served.
 - When a screen later needs live data, replace its static fragment with a Go
   handler that renders the same fragment HTML; the htmx side doesn't change.
 - JS is written in ES5 style (`var`, function expressions) — match it.

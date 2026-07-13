@@ -9,7 +9,7 @@
  * Bump VERSION to force old caches to be discarded on the next visit.
  */
 
-var VERSION = "ownvault-v9";
+var VERSION = "ownvault-v10";
 
 // How long to wait for the server before falling back to cache. An
 // unreachable host (machine asleep / other network) doesn't refuse the
@@ -46,6 +46,7 @@ var PRECACHE = [
   "/pages/settings.html",
   "/pages/about.html",
   "/manifest.webmanifest",
+  "/icons/lock.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/apple-touch-icon.png"
