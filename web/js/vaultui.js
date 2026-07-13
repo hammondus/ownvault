@@ -162,12 +162,18 @@
       show(byId("welcome-offline-lead"), !syncing);
       var wid = byId("welcome-vault-id");
       if (wid) wid.value = syncing ? Sync.getVaultId() : "";
+      var wname = byId("welcome-name");
+      var vname = window.App ? App.getVaultName() : "";
+      if (wname) {
+        wname.textContent = vname ? "“" + vname + "” is ready" : "";
+        show(wname, !!vname);
+      }
       updateInstallUI();
     }
     // Start the connect fields empty. The Vault ID must be the *other* device's
     // vault (copied from its Settings) — never this device's own local id, which
     // would just fail to find anything and confuse.
-    ["create-pw", "create-pw2", "unlock-pw", "connect-id", "connect-token"].forEach(function (id) {
+    ["create-name", "create-pw", "create-pw2", "unlock-pw", "connect-id", "connect-token"].forEach(function (id) {
       var f = byId(id);
       if (f) f.value = "";
     });
@@ -227,6 +233,8 @@
     Sync.setVaultId(id);
     Sync.bootstrap().then(function (res) {
       if (res.exists) {
+        // The vault name is inherited from the vault itself on first unlock
+        // (reconcileVaultName), so there's nothing to ask for here.
         showLock("unlock");
       } else if (res.needsAuth) {
         err.textContent = "Access token required or incorrect.";
@@ -299,6 +307,34 @@
     loadEntries();
     if (window.Sync) Sync.start();
     refreshConflicts();
+    reconcileVaultName();
+  }
+
+  // The vault name is both the installed-app name (App, in app.js — local +
+  // manifest) and an encrypted, synced vault setting (Vault) so other devices
+  // inherit it. Setting it writes both; reconciling adopts whatever the vault
+  // carries (how a freshly connected device inherits the name), or seeds the
+  // vault from a pre-existing local-only name.
+  function persistVaultName(name) {
+    if (window.App) App.setVaultName(name); // local display + PWA manifest
+    if (Vault.isUnlocked()) return Vault.setName(name); // encrypted + synced
+    return Promise.resolve();
+  }
+
+  function reconcileVaultName() {
+    if (!Vault.isUnlocked() || !window.App) return;
+    Vault.getName().then(function (vname) {
+      var local = App.getVaultName();
+      if (vname) {
+        // The vault carries the canonical name -> adopt it locally. This is how
+        // a freshly connected device inherits the name. Never writes back.
+        if (local !== vname) App.setVaultName(vname);
+      } else if (local) {
+        // Pre-existing local-only name (older vault, or the device that created
+        // it before the name was synced) -> seed the vault so it propagates.
+        Vault.setName(local);
+      }
+    });
   }
 
   function handleCreate(e) {
@@ -319,7 +355,13 @@
     // Every new vault gets its own server namespace (safety net for the offline
     // path that reaches create directly; the connect screen sets one already).
     if (window.Sync) Sync.ensureVaultId();
+    var name = byId("create-name").value.trim();
     Vault.create(pw).then(function () {
+      // Adopt the vault name: labels the installed app icon + lock screen (App)
+      // and stores it as an encrypted, synced setting (Vault) so other devices
+      // inherit it. Applied before the welcome step so the install button there
+      // already advertises the chosen name in the manifest.
+      if (name) persistVaultName(name);
       // Show the welcome step: it surfaces the Vault ID (sync vaults only, so
       // other devices can connect — offline vaults have no server yet, and it's
       // always in Settings later) and offers to install the app.
@@ -839,6 +881,12 @@
       var vid = byId("vault-id");
       if (vid) vid.value = Sync.getVaultId();
     }
+    if (window.App) {
+      var vn = byId("vault-name");
+      if (vn) vn.value = App.getVaultName();
+      var mm = byId("manifest-mode");
+      if (mm) mm.checked = App.manifestMode() === "server";
+    }
     updateInstallUI(); // reflect install state in the Settings install card
   }
 
@@ -1038,6 +1086,16 @@
       printRecoverySheet();
       return;
     }
+    if (e.target.closest("#vault-name-save")) {
+      persistVaultName(byId("vault-name").value.trim());
+      settingsMsg(
+        "vault-name-msg",
+        "Saved and synced to your other devices. An already-installed app keeps " +
+          "its old icon name until you reinstall it.",
+        false
+      );
+      return;
+    }
     if (e.target.closest("#export-btn")) {
       Vault.exportVault(window.Sync ? Sync.getVaultId() : "").then(function (blob) {
         var url = URL.createObjectURL(blob);
@@ -1067,6 +1125,10 @@
     }
     if (e.target.id === "sync-enable") {
       if (window.Sync) Sync.setEnabled(e.target.checked);
+      return;
+    }
+    if (e.target.id === "manifest-mode") {
+      if (window.App) App.setManifestMode(e.target.checked ? "server" : "local");
       return;
     }
     if (e.target.id === "sync-token") {
@@ -1279,6 +1341,7 @@
     if (Vault.isUnlocked()) {
       loadEntries();
       refreshConflicts();
+      reconcileVaultName(); // a rename synced from another device lands here
     }
     // Only a genuine local edit needs pushing. Scheduling a sync on sync-applied
     // changes too would loop forever (every sync refreshes -> schedules a sync).

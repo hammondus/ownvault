@@ -419,6 +419,20 @@ body.locked {
   opacity: 0.65;
 }
 
+/* The freshly created vault's name, shown atop the welcome step. */
+.lock-vault-name {
+  margin: 0 0 14px;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+/* Sub-label under a settings toggle (e.g. the app-name mode explainer). */
+.setting-row small {
+  display: block;
+  margin-top: 2px;
+  font-weight: normal;
+}
+
 /* Welcome-step "Install the app" area: set off from the vault-id block above
    by a hairline divider. */
 #welcome-install {

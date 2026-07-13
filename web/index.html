@@ -65,6 +65,9 @@
       <form id="create-form" class="lock-form" hidden>
         <p class="lock-lead">Set a master password. It encrypts everything and
           cannot be recovered — there is no reset.</p>
+        <input id="create-name" class="lock-input" type="text"
+               placeholder="Vault name (e.g. Home, Work)" autocomplete="off"
+               autocapitalize="words" maxlength="30" aria-label="Vault name">
         <input id="create-pw" class="lock-input" type="password"
                placeholder="Master password" autocomplete="new-password">
         <input id="create-pw2" class="lock-input" type="password"
@@ -101,6 +104,7 @@
       <!-- Shown once, right after a new vault is created: surface the Vault ID so
            the user can connect other devices to this same vault. -->
       <div id="welcome-panel" class="lock-form" hidden>
+        <h2 id="welcome-name" class="lock-vault-name" hidden></h2>
         <!-- Sync vaults: surface the Vault ID for connecting other devices. -->
         <div id="welcome-sync">
           <p class="lock-lead">Your vault is ready. To sync another device to

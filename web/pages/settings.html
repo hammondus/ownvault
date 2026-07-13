@@ -26,6 +26,26 @@
     </form>
   </div>
 
+  <div class="card">
+    <h2 class="card-title">Vault name</h2>
+    <p class="card-note">A short label for this vault (e.g. Home, Work). It names
+      the installed app icon and shows on the lock screen. Encrypted and synced,
+      so your other devices inherit it — the server never sees it.</p>
+    <div class="sync-row">
+      <input id="vault-name" class="form-input" type="text" maxlength="30"
+             placeholder="e.g. Home" autocomplete="off" autocapitalize="words">
+      <button id="vault-name-save" class="btn" type="button">Save</button>
+    </div>
+    <p id="vault-name-msg" class="form-msg" hidden></p>
+    <label class="setting-row">
+      <span>Let this server name the app
+        <small class="card-note">Only for a server you run yourself — it sends
+          the name to the server. Off (default) keeps the name on this device, so
+          it's safe on a shared server.</small></span>
+      <input id="manifest-mode" type="checkbox">
+    </label>
+  </div>
+
   <!-- Install as a PWA. The browser's own install control is easy to miss, so
        offer it here too (as well as on the welcome step). vaultui.js
        updateInstallUI reveals this card only when there's something to show:

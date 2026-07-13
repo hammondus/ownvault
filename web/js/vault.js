@@ -30,6 +30,15 @@ window.Vault = (function () {
   var STORE_ENTRIES = "entries";
   var META_KEY = "vault";
 
+  // A reserved entry holding vault-level settings (currently just the vault
+  // name) as an encrypted, synced payload — so the name follows the vault to
+  // new devices without the server ever seeing it. It rides the normal per-entry
+  // sync (proper per-entry concurrency + tombstones), deliberately NOT the
+  // wrapped-key meta doc (whose server write is last-writer-wins, so bundling a
+  // user-editable name there could clobber a password change). It's hidden from
+  // the passwords list/search/count and never raises a user conflict.
+  var SETTINGS_ID = "__vault__";
+
   // PBKDF2-SHA256 work factor. High by design: the wrapped key is the only
   // thing standing between an attacker with the ciphertext and the vault.
   var PBKDF2_ITERATIONS = 600000;
@@ -359,7 +368,7 @@ window.Vault = (function () {
     requireUnlocked();
     return entriesGetAll().then(function (envs) {
       var live = envs.filter(function (e) {
-        return !e.deleted;
+        return !e.deleted && e.id !== SETTINGS_ID; // hide the reserved settings record
       });
       // Skip anything that won't decrypt (e.g. foreign data pulled from a
       // shared server) rather than failing the whole list.
@@ -447,6 +456,64 @@ window.Vault = (function () {
         remote: null
       }).then(function () {
         notifyChanged(true);
+      });
+    });
+  }
+
+  /* ==================== vault settings (name) ==================== */
+
+  // Decrypt the reserved settings record into an object ({name, ...}), or {} if
+  // absent / undecryptable. Requires an unlocked vault (uses the vault key).
+  function settingsGet() {
+    requireUnlocked();
+    return entryGetRaw(SETTINGS_ID).then(function (env) {
+      if (!env || env.deleted || !env.ciphertext) return {};
+      return aesDecrypt(vaultKey, env.iv, env.ciphertext)
+        .then(function (bytes) {
+          try {
+            return JSON.parse(utf8Decode(bytes)) || {};
+          } catch (e) {
+            return {};
+          }
+        })
+        .catch(function () {
+          return {};
+        });
+    });
+  }
+
+  // The vault's synced display name ("" if never set).
+  function getName() {
+    return settingsGet().then(function (s) {
+      return s.name || "";
+    });
+  }
+
+  // Set the vault name: merge into the settings payload, encrypt, and store as a
+  // dirty entry so it syncs to other devices like any edit (rev-based OCC).
+  function setName(name) {
+    requireUnlocked();
+    return entryGetRaw(SETTINGS_ID).then(function (prior) {
+      return settingsGet().then(function (cur) {
+        cur.name = name || "";
+        var now = Date.now();
+        return aesEncrypt(vaultKey, utf8Encode(JSON.stringify(cur))).then(
+          function (enc) {
+            return entryPutRaw({
+              id: SETTINGS_ID,
+              iv: enc.iv,
+              ciphertext: enc.ciphertext,
+              updatedAt: now,
+              deleted: false,
+              rev: prior ? prior.rev || 0 : 0,
+              dirty: true,
+              conflict: false,
+              remote: null
+            }).then(function () {
+              notifyChanged(true);
+            });
+          }
+        );
       });
     });
   }
@@ -688,6 +755,19 @@ window.Vault = (function () {
         }
         // local is a pending local edit
         if ((dto.rev || 0) === (local.rev || 0)) return Promise.resolve();
+        // The vault settings record (name) must never surface as a user
+        // conflict — auto-merge last-writer-wins by updatedAt.
+        if (local.id === SETTINGS_ID) {
+          if ((dto.updatedAt || 0) > (local.updatedAt || 0)) {
+            var take = dtoToEnv(dto);
+            take.dirty = false;
+            take.conflict = false;
+            take.remote = null;
+            return entryPutRaw(take);
+          }
+          local.rev = dto.rev || 0; // rebase so our newer name pushes and wins
+          return entryPutRaw(local);
+        }
         local.conflict = true;
         local.remote = dto;
         return entryPutRaw(local);
@@ -744,7 +824,7 @@ window.Vault = (function () {
   function conflictCount() {
     return entriesGetAll().then(function (envs) {
       return envs.filter(function (e) {
-        return e.conflict;
+        return e.conflict && e.id !== SETTINGS_ID;
       }).length;
     });
   }
@@ -754,7 +834,7 @@ window.Vault = (function () {
     requireUnlocked();
     return entriesGetAll().then(function (envs) {
       var conflicted = envs.filter(function (e) {
-        return e.conflict && e.remote;
+        return e.conflict && e.remote && e.id !== SETTINGS_ID;
       });
       return Promise.all(
         conflicted.map(function (e) {
@@ -814,6 +894,8 @@ window.Vault = (function () {
     get: get,
     put: put,
     remove: remove,
+    getName: getName,
+    setName: setName,
     exportVault: exportVault,
     importVault: importVault,
     onChange: onChange,

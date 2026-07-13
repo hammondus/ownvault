@@ -34,6 +34,105 @@
 
   applyScheme(savedScheme());
 
+  /* ==================== PWA / vault name ==================== */
+  // A short local nickname for this vault ("Home", "Work"). It labels the
+  // installed app icon and the lock screen. It is stored ONLY on this device —
+  // never sent to a sync server — so the zero-knowledge property holds even on
+  // a shared public server. Each vault lives on its own origin (its own server),
+  // so one origin = one name; we just re-apply it on every load, which also
+  // sidesteps the timing quirk where the browser captures the manifest name
+  // before the user has typed one.
+
+  var VAULT_NAME_KEY = "vaultName";
+  var MANIFEST_MODE_KEY = "manifestMode"; // "local" (Option A, default) | "server" (Option B)
+  var manifestBlobUrl = null;
+
+  function getVaultName() {
+    try {
+      return localStorage.getItem(VAULT_NAME_KEY) || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function manifestMode() {
+    var m = null;
+    try {
+      m = localStorage.getItem(MANIFEST_MODE_KEY);
+    } catch (e) { /* ignore */ }
+    return m === "server" ? "server" : "local";
+  }
+
+  function setAppleTitle(value) {
+    // iOS ignores the manifest for naming; the home-screen title comes from this
+    // meta (falling back to <title>). Create it lazily — index.html doesn't ship
+    // one so the default install stays "Own Vault".
+    var m = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+    if (!m) {
+      m = document.createElement("meta");
+      m.setAttribute("name", "apple-mobile-web-app-title");
+      document.head.appendChild(m);
+    }
+    m.setAttribute("content", value);
+  }
+
+  // Option A: point <link rel="manifest"> at a client-generated manifest that
+  // carries the vault name. The name never leaves the device. Icons/URLs must be
+  // ABSOLUTE — a blob: URL has no useful base to resolve "/icons/..." against.
+  // id + start_url stay constant so the browser treats every name as the SAME
+  // app (a rename relabels it; it doesn't install a duplicate).
+  function setBlobManifest(link, name) {
+    var origin = location.origin;
+    var manifest = {
+      id: origin + "/",
+      name: name,
+      short_name: name,
+      description:
+        "Own Vault: an offline-first, end-to-end encrypted password manager.",
+      start_url: origin + "/",
+      scope: origin + "/",
+      display: "standalone",
+      background_color: "#f4f6f8",
+      theme_color: SCHEMES[savedScheme()],
+      icons: [
+        { src: origin + "/icons/lock.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+        { src: origin + "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+        { src: origin + "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+        { src: origin + "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
+      ]
+    };
+    try {
+      var blob = new Blob([JSON.stringify(manifest)], {
+        type: "application/manifest+json"
+      });
+      var url = URL.createObjectURL(blob);
+      if (manifestBlobUrl) URL.revokeObjectURL(manifestBlobUrl);
+      manifestBlobUrl = url;
+      link.href = url;
+    } catch (e) {
+      // Blob manifest unsupported: leave the static manifest (default name).
+    }
+  }
+
+  // Reflect the vault name in the installed-app name (manifest) and the iOS
+  // home-screen title. Called at startup and whenever the name/mode changes.
+  function applyPwaName() {
+    var name = getVaultName();
+    setAppleTitle(name || "Own Vault");
+    var link = document.querySelector('link[rel="manifest"]');
+    if (!link || !name) return; // no custom name yet -> keep the static manifest
+    if (manifestMode() === "server") {
+      // Option B: the server injects the name into the manifest it serves. Only
+      // for a server you run yourself — the name is visible to it. Same-origin,
+      // so icon URLs can stay relative.
+      link.href = "/manifest.webmanifest?name=" + encodeURIComponent(name);
+    } else {
+      setBlobManifest(link, name);
+    }
+  }
+
+  applyPwaName();
+
   var btn = document.getElementById("menu-btn");
   var nav = document.getElementById("nav");
   var overlay = document.getElementById("overlay");
@@ -88,7 +187,7 @@
     navLinks.forEach(function (a) {
       a.classList.toggle("active", a === link);
     });
-    document.title = link.dataset.title + " - Own Vault";
+    document.title = link.dataset.title + " - " + (getVaultName() || "Own Vault");
   }
 
   // The drawer slides closed while the new content swaps in underneath —
@@ -379,4 +478,25 @@
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js");
   }
+
+  /* ==================== exports ==================== */
+  // Vault name + PWA-name mode live in the app shell (it owns the manifest link
+  // and <title>); vaultui.js drives them from the create/settings screens.
+  window.App = {
+    getVaultName: getVaultName,
+    setVaultName: function (name) {
+      try {
+        localStorage.setItem(VAULT_NAME_KEY, name || "");
+      } catch (e) { /* ignore */ }
+      applyPwaName();
+      syncUI(); // refresh the tab-title suffix immediately
+    },
+    manifestMode: manifestMode,
+    setManifestMode: function (mode) {
+      try {
+        localStorage.setItem(MANIFEST_MODE_KEY, mode === "server" ? "server" : "local");
+      } catch (e) { /* ignore */ }
+      applyPwaName();
+    }
+  };
 })();

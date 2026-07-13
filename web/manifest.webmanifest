@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "Own Vault",
   "short_name": "Own Vault",
   "description": "Own Vault: an offline-first, end-to-end encrypted password manager.",

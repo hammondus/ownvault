@@ -176,8 +176,41 @@ Supporting flows the above depends on:
   just the unlock prompt. See Public Use for the Vault ID model.
 - **Add / edit / delete**: an add button creates a new entry; the record modal
   has edit and delete actions. Deletes are tombstones (see the data model).
+  Destructive prompts (delete, restore, print recovery sheet) use the in-app
+  themed `confirmDialog()` in vaultui.js, never `window.confirm`.
 - **Auto-lock**: the vault re-locks after a period of inactivity and via an
   explicit lock button, requiring the master password again.
+- **Vault name (PWA icon name)**: the create screen prompts for a short name
+  ("Home", "Work"); it labels the installed app icon and the lock screen. It is
+  a **property of the vault, synced end-to-end**: stored as a reserved encrypted
+  entry (`vault.js` `SETTINGS_ID = "__vault__"`, payload `{name}`) that rides the
+  normal per-entry sync — deliberately NOT the wrapped-key meta doc, whose server
+  write is last-writer-wins and could clobber a password change. So a device that
+  **connects** to an existing Vault ID *inherits* the name on first unlock (no
+  name field on the connect screen), and renaming on any device propagates to all
+  of them; the server only ever sees the ciphertext. `vaultui.js`
+  `reconcileVaultName()` (run on unlock and after each sync) adopts whatever the
+  vault carries — or seeds the vault from a pre-existing local-only name, so
+  older/single-device vaults migrate automatically. The name is hidden from the
+  list/search/count and never raises a sync conflict (name-vs-name auto-merges
+  last-writer-wins in `applyPulled`). Two layers hold it: `vault.js` (the synced
+  encrypted copy) and `web/js/app.js` — the shell, which owns the `<link
+  rel="manifest">` + `<title>` and keeps a local `localStorage vaultName` mirror
+  for use before unlock (the manifest is set on every load). app.js applies it to
+  the installed-app name two ways, chosen in Settings:
+  - **Option A (default, `manifestMode` = "local")**: a client-generated
+    manifest via a `blob:` URL with the name baked in — the name never leaves
+    the device, preserving zero-knowledge on shared/public servers. Icon URLs
+    must be absolute (a blob URL has no base); `id`/`start_url` stay constant so
+    a rename relabels the *same* app instead of installing a duplicate.
+  - **Option B (`manifestMode` = "server")**: `<link
+    rel="manifest" href="/manifest.webmanifest?name=…">`; `main.go` injects the
+    name into the served manifest. Only for a server you run yourself (the name
+    is visible to it). The name is echoed back, never stored.
+  - iOS ignores the manifest for naming, so app.js also sets an
+    `apple-mobile-web-app-title` meta from the name (the Add-to-Home-Screen
+    sheet is user-editable regardless). An already-installed app keeps its old
+    icon name until reinstalled.
 
 
 # Public Use
