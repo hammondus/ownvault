@@ -109,6 +109,16 @@ Settings).
   matching server entries and revives ones it had deleted, while entries that
   exist only on the server are kept. The file also records your (non-secret)
   Vault ID, so restoring reattaches to the same server vault (see Recovery).
+- **Emergency recovery sheet.** Mark your truly critical, rarely-changing
+  entries — crypto seed phrases, master passwords, 2FA backup codes — as
+  *critical* on their Edit screen. Then Settings → *Emergency recovery sheet*
+  prints just those to paper via the browser's print dialog (`window.print()`,
+  no PDF file). An offline last resort that device failure, ransomware, or
+  cleared browser storage can't touch. It's plaintext by design: you're warned
+  first, values print in monospace so seed words and codes transcribe
+  unambiguously, and the paper is the only copy created. Store it somewhere
+  physically secure, shred old copies, and use a printer you trust — shared or
+  networked printers can retain what they print.
 
 ## Recovery — when things go wrong
 
@@ -142,7 +152,9 @@ hand it back; you have to present it. Plan your recovery around that:
 **So, minimum safe practice:** never forget the master password, and keep an
 encrypted backup somewhere safe (cloud drive, USB stick — it's ciphertext).
 A backup makes the Vault ID a non-issue for recovery; without one, server sync
-alone is not a backup.
+alone is not a backup. For the handful of secrets you absolutely cannot lose,
+also print an **emergency recovery sheet** (above) — paper survives things that
+take out every digital copy at once.
 
 > The Vault ID isn't a password — it's fine to write it down or store it in
 > plain sight. The master password is the only true secret.

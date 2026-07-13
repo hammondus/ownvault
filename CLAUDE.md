@@ -122,11 +122,15 @@ The following data will be kept for each password entry
 - general notes
 - created timestamp
 - last modified timestamp
+- `critical` flag (boolean) — marks an entry for the printed emergency
+  recovery sheet (see UI). Optional; absent/false on entries created before the
+  feature.
 
 These fields are the *encrypted payload* — they live inside each entry's
 ciphertext as a JSON object (JSON, not fixed columns, so future fields like a
-TOTP secret can be added without a schema change). They sit inside the sync
-envelope from the data model above: `{id, ciphertext, updatedAt, deleted}`.
+TOTP secret can be added without a schema change — `critical` was added exactly
+this way). They sit inside the sync envelope from the data model above:
+`{id, ciphertext, updatedAt, deleted}`.
 The envelope's `updatedAt` is the only timestamp the server can see and is
 what sync compares; the payload's own created/last-modified timestamps stay
 encrypted.
@@ -150,11 +154,26 @@ entries pre-fill the url with `https://` to save typing (a bare scheme is
 treated as empty on save).
 In the modal the password is masked by default with a reveal (show/hide) toggle.
 
+**Critical entries + emergency recovery sheet.** The add/edit form has a
+"Critical" checkbox (stored as the `critical` payload field); such entries show
+a violet badge in the list and record view. Settings → *Emergency recovery
+sheet* → "Print recovery sheet…" gathers every critical entry, shows a blunt
+warning (plaintext passwords; printers can retain copies; store the paper
+securely / shred old ones), then renders a print-only sheet (`#print-sheet`,
+revealed by an `@media print` rule while `body.printing-sheet` is set) and calls
+`window.print()` — straight to the printer, no PDF. Values are monospace so
+seed phrases / backup codes transcribe unambiguously. The plaintext is wiped
+from the DOM on `afterprint` and on lock. This is an offline last resort,
+immune to device failure / ransomware.
+
 Supporting flows the above depends on:
 
-- **Unlock / first run**: the whole app sits behind a lock gate. On first run
-  the user sets the master password (entered twice); on later launches they
-  enter it to unlock. Nothing is shown or decrypted until unlocked.
+- **Unlock / first run**: the whole app sits behind a lock gate; nothing is
+  shown or decrypted until unlocked. On a fresh device with sync on, the gate
+  is a **Connect** step (join an existing vault by its Vault ID + token, or
+  start a new one, or restore from a backup file); creating a new vault mints a
+  Vault ID and shows it once on a welcome step. On later launches the gate is
+  just the unlock prompt. See Public Use for the Vault ID model.
 - **Add / edit / delete**: an add button creates a new entry; the record modal
   has edit and delete actions. Deletes are tombstones (see the data model).
 - **Auto-lock**: the vault re-locks after a period of inactivity and via an
@@ -280,11 +299,17 @@ it would hang) and must keep doing so. The service worker also bypasses
   meta doc get/set, cursor, `listConflicts`, `resolveConflict`) so the sync
   engine never touches binary or keys.
 - `web/js/sync.js` is HTTP-only orchestration: `pull` (since a cursor) then
-  `push` (optimistic concurrency), triggered on unlock, on local change
-  (debounced), on an SSE `changed` event, or manually. Config in localStorage
-  (`syncEnabled`, `syncToken`); URLs are same-origin.
-- `web/js/vaultui.js` is all the DOM glue (lock gate, list/search, record
-  modal, conflict banner + resolution modal, settings controls).
+  `push` (optimistic concurrency), triggered on unlock, on a *genuine local
+  edit* (debounced), on an SSE `changed` event, or manually. Config in
+  localStorage (`syncEnabled`, `syncToken`, `vaultId`); URLs are same-origin.
+  Sync is event-driven, NOT a poll — critically, `Vault.onChange` only schedules
+  a sync when the change is a real local edit. `vault.js` `notifyChanged(local)`
+  passes `true` only from `put`/`remove`/`importVault`; sync-applied refreshes
+  (`applyPulled`/`confirmPushed`/`resolveConflict`) pass nothing, so a sync's own
+  UI refresh can't re-trigger a sync (that regression caused a ~1/s idle poll).
+- `web/js/vaultui.js` is all the DOM glue (lock gate incl. the connect/welcome/
+  restore steps, list/search, record modal, conflict banner + resolution modal,
+  settings controls, the critical-entry checkbox + emergency recovery sheet).
 - `main.go` stores only ciphertext in SQLite, scoped by the client's Vault ID
   (see Public Use), assigns a per-vault monotonic `rev` per write, and on
   `/api/push` accepts an entry only if the server's current rev still equals the
