@@ -243,8 +243,15 @@ window.Vault = (function () {
     });
   }
 
-  function notifyChanged() {
-    if (typeof changeCb === "function") changeCb();
+  // local=true marks a genuine local edit (add/edit/delete/import) that needs
+  // pushing. Sync-applied changes (applyPulled/confirmPushed/resolveConflict)
+  // call this with no arg so the listener refreshes the UI but does NOT schedule
+  // another sync — otherwise every sync's own refresh would re-trigger a sync,
+  // polling forever. Note the `=== true` guard: several callers use
+  // `.then(notifyChanged)`, which would otherwise pass the promise's resolved
+  // value in as `local`.
+  function notifyChanged(local) {
+    if (typeof changeCb === "function") changeCb(local === true);
   }
 
   function requireUnlocked() {
@@ -414,7 +421,7 @@ window.Vault = (function () {
           remote: null
         };
         return entryPutRaw(env).then(function () {
-          notifyChanged();
+          notifyChanged(true);
           payload.id = id;
           payload.updatedAt = now;
           return payload;
@@ -438,7 +445,9 @@ window.Vault = (function () {
         dirty: true,
         conflict: false,
         remote: null
-      }).then(notifyChanged);
+      }).then(function () {
+        notifyChanged(true);
+      });
     });
   }
 
@@ -545,7 +554,7 @@ window.Vault = (function () {
           es.put(env);
         });
         t.oncomplete = function () {
-          notifyChanged();
+          notifyChanged(true);
           resolve({ entries: envs.length, vaultId: doc.vaultId || "" });
         };
         t.onerror = function () {

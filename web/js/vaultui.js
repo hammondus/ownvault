@@ -1108,12 +1108,14 @@
 
   // Re-render the list when entries change under us (add/edit/delete/sync),
   // and schedule a push of local changes.
-  Vault.onChange(function () {
+  Vault.onChange(function (local) {
     if (Vault.isUnlocked()) {
       loadEntries();
       refreshConflicts();
     }
-    if (window.Sync) Sync.syncSoon();
+    // Only a genuine local edit needs pushing. Scheduling a sync on sync-applied
+    // changes too would loop forever (every sync refreshes -> schedules a sync).
+    if (local && window.Sync) Sync.syncSoon();
   });
 
   // Close modals on Escape.
