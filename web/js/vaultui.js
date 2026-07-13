@@ -680,8 +680,18 @@
     var card = byId("modal-card");
     var id = card.dataset.id;
     if (!id) return;
-    if (!window.confirm("Delete this entry? This can't be undone.")) return;
-    Vault.remove(id).then(closeModal);
+    var match = entries.filter(function (x) {
+      return x.id === id;
+    })[0];
+    var title = match && match.title ? match.title : "this entry";
+    confirmDialog({
+      title: "Delete entry?",
+      message: "“" + title + "” will be permanently deleted. This can't be undone.",
+      confirmText: "Delete",
+      danger: true
+    }).then(function (ok) {
+      if (ok) Vault.remove(id).then(closeModal);
+    });
   }
 
   function openModal() {
@@ -695,7 +705,46 @@
       m.hidden = true;
       byId("modal-card").innerHTML = "";
     }
-    document.body.classList.remove("modal-open");
+    if (byId("confirm-modal").hidden) document.body.classList.remove("modal-open");
+  }
+
+  /* ==================== confirm dialog ==================== */
+  // In-app replacement for window.confirm() so destructive prompts match the
+  // app's modal styling instead of the browser's chrome. Returns a promise that
+  // resolves true (confirmed) / false (cancelled). Layers above the record and
+  // conflict modals. opts: { title, message, confirmText, danger }.
+
+  var confirmResolve = null;
+
+  function confirmDialog(opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      // A second confirm shouldn't strand the first: resolve it as cancelled.
+      if (confirmResolve) confirmResolve(false);
+      confirmResolve = resolve;
+      byId("confirm-title").textContent = opts.title || "Are you sure?";
+      byId("confirm-text").textContent = opts.message || "";
+      var ok = byId("confirm-ok");
+      ok.textContent = opts.confirmText || "Confirm";
+      ok.className = opts.danger ? "btn btn-danger" : "btn";
+      show(byId("confirm-modal"), true);
+      document.body.classList.add("modal-open");
+      setTimeout(function () {
+        ok.focus();
+      }, 50);
+    });
+  }
+
+  function closeConfirm(result) {
+    var m = byId("confirm-modal");
+    if (m && !m.hidden) m.hidden = true;
+    // Keep modal-open set if a modal is still open underneath this one.
+    if (byId("record-modal").hidden && byId("conflict-modal").hidden) {
+      document.body.classList.remove("modal-open");
+    }
+    var resolve = confirmResolve;
+    confirmResolve = null;
+    if (resolve) resolve(!!result);
   }
 
   /* ==================== clipboard ==================== */
@@ -937,21 +986,25 @@
       return;
     }
     var warn =
-      "Print an emergency recovery sheet?\n\n" +
       critical.length + " critical " + (critical.length > 1 ? "entries" : "entry") +
       " will be printed IN PLAIN TEXT, including passwords.\n\n" +
       "• Anyone who holds the paper has these secrets — no master password needed.\n" +
       "• Printers (especially shared / office / networked) can keep a copy of what they print.\n" +
-      "• Store the sheet somewhere physically secure and shred it when it's replaced.\n\n" +
-      "Continue?";
-    if (!window.confirm(warn)) return;
-    buildRecoverySheet(critical);
-    document.body.classList.add("printing-sheet");
-    // Let the DOM paint the sheet before the (blocking) print dialog opens.
-    setTimeout(function () {
-      window.print();
-    }, 50);
-    settingsMsg("recovery-msg", "Sent " + critical.length + " entries to your printer.", false);
+      "• Store the sheet somewhere physically secure and shred it when it's replaced.";
+    confirmDialog({
+      title: "Print recovery sheet?",
+      message: warn,
+      confirmText: "Print"
+    }).then(function (ok) {
+      if (!ok) return;
+      buildRecoverySheet(critical);
+      document.body.classList.add("printing-sheet");
+      // Let the DOM paint the sheet before the (blocking) print dialog opens.
+      setTimeout(function () {
+        window.print();
+      }, 50);
+      settingsMsg("recovery-msg", "Sent " + critical.length + " entries to your printer.", false);
+    });
   }
 
   // Tidy up after the print dialog closes (or is cancelled).
@@ -1024,39 +1077,43 @@
       return;
     }
     if (e.target.id !== "import-file") return;
-    var file = e.target.files && e.target.files[0];
+    var input = e.target;
+    var file = input.files && input.files[0];
+    input.value = ""; // reset now so re-selecting the same file re-fires change
     if (!file) return;
     var warn =
-      "Restore this backup?\n\nIt replaces this device's vault with the backup's contents.";
+      "It replaces this device's vault with the backup's contents.";
     if (!window.Sync || Sync.isEnabled()) {
       warn +=
         " Because sync is on, the backup's entries also overwrite the matching " +
         "ones on the server and your other devices (entries that exist only on " +
         "the server are kept).";
     }
-    warn += "\n\nThis can't be undone. Continue?";
-    if (!window.confirm(warn)) {
-      e.target.value = "";
-      return;
-    }
-    var reader = new FileReader();
-    reader.onload = function () {
-      Vault.importVault(String(reader.result)).then(
-        function (res) {
-          // Reattach to the vault the backup came from (v2 backups), so the
-          // restored device rejoins the same server namespace and keeps syncing
-          // with any surviving devices instead of forking a new vault.
-          if (res.vaultId && window.Sync) Sync.setVaultId(res.vaultId);
-          settingsMsg("backup-msg", "Imported " + res.entries + " entries. Unlock with that backup's password.", false);
-          lockNow();
-        },
-        function (err) {
-          settingsMsg("backup-msg", (err && err.message) || "Import failed.", true);
-        }
-      );
-    };
-    reader.readAsText(file);
-    e.target.value = "";
+    warn += "\n\nThis can't be undone.";
+    confirmDialog({
+      title: "Restore this backup?",
+      message: warn,
+      confirmText: "Restore"
+    }).then(function (ok) {
+      if (!ok) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        Vault.importVault(String(reader.result)).then(
+          function (res) {
+            // Reattach to the vault the backup came from (v2 backups), so the
+            // restored device rejoins the same server namespace and keeps syncing
+            // with any surviving devices instead of forking a new vault.
+            if (res.vaultId && window.Sync) Sync.setVaultId(res.vaultId);
+            settingsMsg("backup-msg", "Imported " + res.entries + " entries. Unlock with that backup's password.", false);
+            lockNow();
+          },
+          function (err) {
+            settingsMsg("backup-msg", (err && err.message) || "Import failed.", true);
+          }
+        );
+      };
+      reader.readAsText(file);
+    });
   });
 
   document.body.addEventListener("submit", function (e) {
@@ -1195,6 +1252,16 @@
     }
   });
 
+  byId("confirm-ok").addEventListener("click", function () {
+    closeConfirm(true);
+  });
+  byId("confirm-cancel").addEventListener("click", function () {
+    closeConfirm(false);
+  });
+  byId("confirm-modal").addEventListener("click", function (e) {
+    if (e.target.closest("[data-xclose]")) closeConfirm(false);
+  });
+
   // Live sync status -> conflict banner + Settings status line.
   if (window.Sync) {
     Sync.onStatus(function (s) {
@@ -1218,10 +1285,12 @@
     if (local && window.Sync) Sync.syncSoon();
   });
 
-  // Close modals on Escape.
+  // Close modals on Escape. The confirm dialog is topmost, so it goes first
+  // (Escape = cancel).
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
-    if (!byId("conflict-modal").hidden) closeConflictModal();
+    if (!byId("confirm-modal").hidden) closeConfirm(false);
+    else if (!byId("conflict-modal").hidden) closeConflictModal();
     else if (!byId("record-modal").hidden) closeModal();
   });
 

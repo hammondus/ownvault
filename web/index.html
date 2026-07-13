@@ -162,6 +162,26 @@
     <div id="conflict-card" class="modal-card" role="dialog" aria-modal="true"></div>
   </div>
 
+  <!-- Generic confirm dialog (delete, and other destructive actions). Layers
+       above the record/conflict modals. vaultui.js confirmDialog() fills the
+       title/message/button and resolves a promise on the user's choice. -->
+  <div id="confirm-modal" class="modal modal-confirm" hidden>
+    <div class="modal-overlay" data-xclose="1"></div>
+    <div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true"
+         aria-labelledby="confirm-title" aria-describedby="confirm-text">
+      <div class="modal-head">
+        <h2 id="confirm-title" class="modal-title"></h2>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-text" class="confirm-text"></p>
+      </div>
+      <div class="modal-foot">
+        <button id="confirm-cancel" class="btn btn-ghost" type="button">Cancel</button>
+        <button id="confirm-ok" class="btn" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Emergency recovery sheet: hidden on screen; the print stylesheet shows
        only this (in place of the app) while body.printing-sheet is set.
        vaultui.js fills it from the "critical" entries just before window.print(). -->

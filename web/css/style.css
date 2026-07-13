@@ -615,6 +615,24 @@ body.locked {
   margin-top: 16px;
 }
 
+/* Confirm dialog: a small modal that layers above the record/conflict modals
+   (which sit at z-index 1080). */
+.modal-confirm {
+  z-index: 1085;
+}
+
+.modal-card-sm {
+  max-width: 400px;
+}
+
+.confirm-text {
+  margin: 0;
+  line-height: 1.5;
+  opacity: 0.85;
+  /* Messages carry their own line breaks (and bullet lists), so honour \n. */
+  white-space: pre-line;
+}
+
 .field {
   padding: 10px 0;
   border-bottom: 1px solid #eceff2;
