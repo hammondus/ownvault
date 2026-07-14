@@ -141,6 +141,21 @@
     if (node) node.hidden = !on;
   }
 
+  // WebCrypto (crypto.subtle) only exists in a secure context. Plain HTTP to a
+  // LAN IP — the usual way people first hit the app from a phone — is NOT secure,
+  // so subtle is undefined and every unlock/create would throw deep in the crypto
+  // chain. Detect it up front and explain, instead of failing silently.
+  // (localhost is a secure-context exception, which is why desktop dev works.)
+  function webCryptoReady() {
+    return !!(window.crypto && window.crypto.subtle);
+  }
+
+  var INSECURE_MSG =
+    "This device needs a secure (HTTPS) connection to unlock — browser " +
+    "encryption is turned off otherwise. Open Own Vault at its https:// address " +
+    "(on a phone over your LAN, use the server's HTTPS URL — see the README's " +
+    "mkcert / iPhone setup).";
+
   /* ==================== lock gate ==================== */
 
   function showLock(mode) {
@@ -187,6 +202,16 @@
       setTimeout(function () {
         focus.focus();
       }, 50);
+    }
+    // Surface the insecure-context problem immediately (before a dead tap on a
+    // form that can't possibly work). Connect only reaches the server, so it's
+    // fine without WebCrypto; the message belongs on create/unlock.
+    if (!webCryptoReady() && (mode === "create" || mode === "unlock")) {
+      var ie = byId(mode === "create" ? "create-error" : "unlock-error");
+      if (ie) {
+        ie.textContent = INSECURE_MSG;
+        show(ie, true);
+      }
     }
   }
 
@@ -342,6 +367,11 @@
     var pw = byId("create-pw").value;
     var pw2 = byId("create-pw2").value;
     var err = byId("create-error");
+    if (!webCryptoReady()) {
+      err.textContent = INSECURE_MSG;
+      show(err, true);
+      return;
+    }
     if (pw.length < 8) {
       err.textContent = "Use at least 8 characters.";
       show(err, true);
@@ -374,17 +404,32 @@
 
   function handleUnlock(e) {
     e.preventDefault();
-    var pw = byId("unlock-pw").value;
     var err = byId("unlock-error");
-    Vault.unlock(pw).then(function (ok) {
-      if (ok) {
-        afterUnlock();
-      } else {
-        err.textContent = "Incorrect master password.";
+    if (!webCryptoReady()) {
+      err.textContent = INSECURE_MSG;
+      show(err, true);
+      return;
+    }
+    var pw = byId("unlock-pw").value;
+    Vault.unlock(pw).then(
+      function (ok) {
+        if (ok) {
+          afterUnlock();
+        } else {
+          err.textContent = "Incorrect master password.";
+          show(err, true);
+          byId("unlock-pw").select();
+        }
+      },
+      function () {
+        // Never leave the button dead: surface the failure instead of the old
+        // silent unhandled-rejection (which is what iOS-over-HTTP hit).
+        err.textContent = webCryptoReady()
+          ? "Couldn't unlock — an unexpected error occurred."
+          : INSECURE_MSG;
         show(err, true);
-        byId("unlock-pw").select();
       }
-    });
+    );
   }
 
   function lockNow() {
@@ -884,8 +929,6 @@
     if (window.App) {
       var vn = byId("vault-name");
       if (vn) vn.value = App.getVaultName();
-      var mm = byId("manifest-mode");
-      if (mm) mm.checked = App.manifestMode() === "server";
     }
     updateInstallUI(); // reflect install state in the Settings install card
   }
@@ -1125,10 +1168,6 @@
     }
     if (e.target.id === "sync-enable") {
       if (window.Sync) Sync.setEnabled(e.target.checked);
-      return;
-    }
-    if (e.target.id === "manifest-mode") {
-      if (window.App) App.setManifestMode(e.target.checked ? "server" : "local");
       return;
     }
     if (e.target.id === "sync-token") {

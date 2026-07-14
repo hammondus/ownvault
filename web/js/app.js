@@ -44,7 +44,6 @@
   // before the user has typed one.
 
   var VAULT_NAME_KEY = "vaultName";
-  var MANIFEST_MODE_KEY = "manifestMode"; // "local" (Option A, default) | "server" (Option B)
   var manifestBlobUrl = null;
 
   function getVaultName() {
@@ -53,14 +52,6 @@
     } catch (e) {
       return "";
     }
-  }
-
-  function manifestMode() {
-    var m = null;
-    try {
-      m = localStorage.getItem(MANIFEST_MODE_KEY);
-    } catch (e) { /* ignore */ }
-    return m === "server" ? "server" : "local";
   }
 
   function setAppleTitle(value) {
@@ -115,20 +106,15 @@
   }
 
   // Reflect the vault name in the installed-app name (manifest) and the iOS
-  // home-screen title. Called at startup and whenever the name/mode changes.
+  // home-screen title. Called at startup and whenever the name changes. The
+  // manifest is generated entirely client-side (a blob: URL) so the name never
+  // reaches the server — keeping zero-knowledge on shared/public servers.
   function applyPwaName() {
     var name = getVaultName();
     setAppleTitle(name || "Own Vault");
     var link = document.querySelector('link[rel="manifest"]');
     if (!link || !name) return; // no custom name yet -> keep the static manifest
-    if (manifestMode() === "server") {
-      // Option B: the server injects the name into the manifest it serves. Only
-      // for a server you run yourself — the name is visible to it. Same-origin,
-      // so icon URLs can stay relative.
-      link.href = "/manifest.webmanifest?name=" + encodeURIComponent(name);
-    } else {
-      setBlobManifest(link, name);
-    }
+    setBlobManifest(link, name);
   }
 
   applyPwaName();
@@ -480,8 +466,8 @@
   }
 
   /* ==================== exports ==================== */
-  // Vault name + PWA-name mode live in the app shell (it owns the manifest link
-  // and <title>); vaultui.js drives them from the create/settings screens.
+  // The vault name lives in the app shell (it owns the manifest link and
+  // <title>); vaultui.js drives it from the create/settings screens.
   window.App = {
     getVaultName: getVaultName,
     setVaultName: function (name) {
@@ -490,13 +476,6 @@
       } catch (e) { /* ignore */ }
       applyPwaName();
       syncUI(); // refresh the tab-title suffix immediately
-    },
-    manifestMode: manifestMode,
-    setManifestMode: function (mode) {
-      try {
-        localStorage.setItem(MANIFEST_MODE_KEY, mode === "server" ? "server" : "local");
-      } catch (e) { /* ignore */ }
-      applyPwaName();
     }
   };
 })();

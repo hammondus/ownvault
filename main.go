@@ -287,41 +287,6 @@ func main() {
 		}
 	})
 
-	// Web app manifest, with an optional injected app name (client Option B —
-	// "let this server name the app"). The client requests
-	// /manifest.webmanifest?name=<vault name> only when the user opts in on a
-	// server they run themselves; otherwise the plain file is served and the
-	// name never reaches the server. The name is a transient label echoed back
-	// to the same caller, never stored, so zero-knowledge is unaffected.
-	mux.HandleFunc("/manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
-		data, err := fs.ReadFile(webRoot, "manifest.webmanifest")
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/manifest+json")
-		name := strings.TrimSpace(r.URL.Query().Get("name"))
-		if rs := []rune(name); len(rs) > 40 {
-			name = string(rs[:40])
-		}
-		if name == "" {
-			w.Write(data)
-			return
-		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			w.Write(data) // fall back to the static manifest on any parse trouble
-			return
-		}
-		m["name"] = name
-		m["short_name"] = name
-		if out, err := json.Marshal(m); err == nil {
-			w.Write(out)
-		} else {
-			w.Write(data)
-		}
-	})
-
 	files := http.FileServerFS(webRoot)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/")

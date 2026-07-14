@@ -196,21 +196,19 @@ Supporting flows the above depends on:
   last-writer-wins in `applyPulled`). Two layers hold it: `vault.js` (the synced
   encrypted copy) and `web/js/app.js` — the shell, which owns the `<link
   rel="manifest">` + `<title>` and keeps a local `localStorage vaultName` mirror
-  for use before unlock (the manifest is set on every load). app.js applies it to
-  the installed-app name two ways, chosen in Settings:
-  - **Option A (default, `manifestMode` = "local")**: a client-generated
-    manifest via a `blob:` URL with the name baked in — the name never leaves
-    the device, preserving zero-knowledge on shared/public servers. Icon URLs
-    must be absolute (a blob URL has no base); `id`/`start_url` stay constant so
-    a rename relabels the *same* app instead of installing a duplicate.
-  - **Option B (`manifestMode` = "server")**: `<link
-    rel="manifest" href="/manifest.webmanifest?name=…">`; `main.go` injects the
-    name into the served manifest. Only for a server you run yourself (the name
-    is visible to it). The name is echoed back, never stored.
-  - iOS ignores the manifest for naming, so app.js also sets an
-    `apple-mobile-web-app-title` meta from the name (the Add-to-Home-Screen
-    sheet is user-editable regardless). An already-installed app keeps its old
-    icon name until reinstalled.
+  for use before unlock (the manifest is set on every load). app.js drives the
+  installed-app name via a **client-generated manifest** (a `blob:` URL with the
+  name baked in) so the name never reaches the server — preserving zero-knowledge
+  even on shared/public servers. (There is deliberately no server-side manifest
+  naming: it would be the one path leaking the plaintext name to the server.)
+  Icon URLs in that manifest must be absolute (a blob URL has no base); its
+  `id`/`start_url` stay constant so a rename relabels the *same* app instead of
+  installing a duplicate. If a browser rejects a blob manifest, it falls back to
+  the static `manifest.webmanifest` (default name) — the user renames the icon
+  once. iOS ignores the manifest for naming, so app.js also sets an
+  `apple-mobile-web-app-title` meta from the name (the Add-to-Home-Screen sheet
+  is user-editable regardless). An already-installed app keeps its old icon name
+  until reinstalled.
 
 
 # Public Use
