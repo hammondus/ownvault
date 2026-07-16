@@ -12,9 +12,12 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/css/style.css">
-  <!-- If the back button hits a page htmx has no snapshot for, do a real
-       reload so the shell re-initialises cleanly. -->
-  <meta name="htmx-config" content='{"refreshOnHistoryMiss":true}'>
+  <!-- refreshOnHistoryMiss: if the back button hits a page htmx has no
+       snapshot for, do a real reload so the shell re-initialises cleanly.
+       includeIndicatorStyles=false: htmx would inject an inline <style> for
+       its (unused here) request-indicator classes, which the strict CSP
+       (style-src 'self', set in main.go) rightly blocks. -->
+  <meta name="htmx-config" content='{"refreshOnHistoryMiss":true,"includeIndicatorStyles":false}'>
 </head>
 <body>
 

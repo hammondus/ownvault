@@ -121,9 +121,10 @@
     var node = document.createElement(tag);
     if (attrs) {
       Object.keys(attrs).forEach(function (k) {
+        // Deliberately no innerHTML branch: everything renders via textContent
+        // so vault data can never be interpreted as markup.
         if (k === "class") node.className = attrs[k];
         else if (k === "text") node.textContent = attrs[k];
-        else if (k === "html") node.innerHTML = attrs[k];
         else node.setAttribute(k, attrs[k]);
       });
     }
@@ -372,8 +373,12 @@
       show(err, true);
       return;
     }
-    if (pw.length < 8) {
-      err.textContent = "Use at least 8 characters.";
+    // 12-char floor: the vault is offline-brute-forceable from a stolen
+    // backup or server DB, so the master password carries the whole load —
+    // PBKDF2 alone can't rescue a short one.
+    if (pw.length < 12) {
+      err.textContent =
+        "Use at least 12 characters — a few random words make a strong passphrase.";
       show(err, true);
       return;
     }
@@ -414,6 +419,10 @@
     Vault.unlock(pw).then(
       function (ok) {
         if (ok) {
+          // Clear immediately — showLock only wipes fields on the *next* lock,
+          // which would leave the master password sitting in the DOM (readable
+          // by any script or devtools snapshot) for the whole session.
+          byId("unlock-pw").value = "";
           afterUnlock();
         } else {
           err.textContent = "Incorrect master password.";
@@ -449,8 +458,11 @@
 
   /* ==================== auto-lock ==================== */
 
+  var lastActivity = Date.now();
+
   function resetIdle() {
     if (!Vault.isUnlocked()) return;
+    lastActivity = Date.now();
     clearTimeout(idleTimer);
     idleTimer = setTimeout(lockNow, AUTO_LOCK_MS);
   }
@@ -459,6 +471,17 @@
     document.addEventListener(evt, function () {
       if (Vault.isUnlocked()) resetIdle();
     });
+  });
+
+  // Browsers suspend timers in background tabs (and mobile OSes freeze the
+  // page outright), so the idle timer alone can leave the vault unlocked long
+  // past its deadline. On return to the foreground, lock immediately if the
+  // inactivity window has already passed.
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) return;
+    if (Vault.isUnlocked() && Date.now() - lastActivity > AUTO_LOCK_MS) {
+      lockNow();
+    }
   });
 
   /* ==================== list + search ==================== */
@@ -642,17 +665,50 @@
     openModal();
   }
 
+  // spellcheck/autocorrect off on every field: Chromium's "enhanced
+  // spellcheck" transmits field contents to a cloud service, and usernames,
+  // URLs, and notes in a password vault must never take that trip.
   function inputField(name, labelText, value, type) {
     var input = el("input", {
       class: "form-input",
       type: type || "text",
       name: name,
       autocomplete: "off",
+      spellcheck: "false",
+      autocorrect: "off",
+      autocapitalize: "off",
       value: value || ""
     });
     return el("label", { class: "form-row" }, [
       el("span", { class: "form-label", text: labelText }),
       input
+    ]);
+  }
+
+  // The password gets a real type="password" input — masked against shoulder
+  // surfing and ineligible for browser spellcheck — with the same reveal
+  // toggle the view modal has.
+  function passwordField(value) {
+    var input = el("input", {
+      class: "form-input",
+      type: "password",
+      name: "password",
+      autocomplete: "new-password",
+      spellcheck: "false",
+      autocorrect: "off",
+      autocapitalize: "off",
+      value: value || ""
+    });
+    var toggle = el("button", {
+      class: "icon-btn",
+      type: "button",
+      "data-reveal-input": "1",
+      "aria-label": "Show password",
+      text: "👁"
+    });
+    return el("div", { class: "form-row" }, [
+      el("span", { class: "form-label", text: "Password" }),
+      el("div", { class: "sync-row" }, [input, toggle])
     ]);
   }
 
@@ -682,7 +738,10 @@
     var notes = el("textarea", {
       class: "form-input",
       name: "notes",
-      rows: "3"
+      rows: "3",
+      spellcheck: "false",
+      autocorrect: "off",
+      autocapitalize: "off"
     });
     notes.value = entry.notes || "";
 
@@ -699,7 +758,7 @@
     var form = el("form", { id: "record-form", class: "modal-body", novalidate: "novalidate" }, [
       inputField("title", "Title", entry.title, "text"),
       inputField("username", "Username", entry.username, "text"),
-      inputField("password", "Password", entry.password, "text"),
+      passwordField(entry.password),
       // Pre-fill the scheme on new entries to save typing; a bare scheme is
       // treated as empty on save.
       inputField("url", "URL", entry.id ? entry.url : entry.url || "https://", "url"),
@@ -950,6 +1009,21 @@
     }
     if (e.target.closest("[data-delete]")) {
       deleteCurrent();
+      return;
+    }
+    // Edit-form password visibility toggle (flips the input's type).
+    var revealInput = e.target.closest("[data-reveal-input]");
+    if (revealInput) {
+      var inp = revealInput.parentNode.querySelector("input");
+      if (inp) {
+        var showNow = inp.type === "password";
+        inp.type = showNow ? "text" : "password";
+        revealInput.textContent = showNow ? "🙈" : "👁";
+        revealInput.setAttribute(
+          "aria-label",
+          showNow ? "Hide password" : "Show password"
+        );
+      }
       return;
     }
     var reveal = e.target.closest("[data-reveal]");
@@ -1221,8 +1295,12 @@
     if (e.target.id !== "change-pw-form") return;
     e.preventDefault();
     var f = e.target;
-    if (f["new"].value.length < 8) {
-      settingsMsg("change-pw-msg", "New password must be at least 8 characters.", true);
+    if (f["new"].value.length < 12) {
+      settingsMsg(
+        "change-pw-msg",
+        "New password must be at least 12 characters — a few random words make a strong passphrase.",
+        true
+      );
       return;
     }
     if (f["new"].value !== f.new2.value) {

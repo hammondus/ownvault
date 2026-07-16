@@ -42,6 +42,12 @@ window.Vault = (function () {
   // PBKDF2-SHA256 work factor. High by design: the wrapped key is the only
   // thing standing between an attacker with the ciphertext and the vault.
   var PBKDF2_ITERATIONS = 600000;
+  // Bounds on the iteration count accepted from synced meta docs and backup
+  // files. Tampering can't reveal anything (the unwrap just fails), but an
+  // absurd count from a hostile server would hang the device deriving the
+  // key, and the floor keeps any future path from quietly downgrading the KDF.
+  var MIN_ITERATIONS = 100000;
+  var MAX_ITERATIONS = 10000000;
   var EXPORT_MAGIC = "ownvault.backup";
   // v2 adds the (non-secret) vaultId so a restore can reattach to the same
   // server namespace. v1 files (no vaultId) still import — they just merge into
@@ -163,7 +169,19 @@ window.Vault = (function () {
 
   /* ==================== crypto ==================== */
 
+  function validIterations(n) {
+    return (
+      typeof n === "number" &&
+      isFinite(n) &&
+      n >= MIN_ITERATIONS &&
+      n <= MAX_ITERATIONS
+    );
+  }
+
   function deriveWrappingKey(password, salt, iterations) {
+    if (!validIterations(iterations)) {
+      return Promise.reject(new Error("implausible KDF iteration count"));
+    }
     return subtle
       .importKey("raw", utf8Encode(password), "PBKDF2", false, ["deriveKey"])
       .then(function (baseKey) {
@@ -229,7 +247,11 @@ window.Vault = (function () {
   }
 
   function importVaultKey(rawBytes) {
-    return subtle.importKey("raw", toU8(rawBytes), { name: "AES-GCM" }, true, [
+    // extractable: false — nothing ever exports the live key (change-password
+    // and backup both work from the wrapped record, not the CryptoKey), so
+    // script running in the page (XSS, a hostile extension) can *use* the key
+    // while unlocked but can never read the key material itself.
+    return subtle.importKey("raw", toU8(rawBytes), { name: "AES-GCM" }, false, [
       "encrypt",
       "decrypt"
     ]);
@@ -237,13 +259,74 @@ window.Vault = (function () {
 
   /* ==================== entry payload <-> envelope ==================== */
 
-  function encryptPayload(payload) {
+  // v2 entry-ciphertext format: a 4-byte magic prefix ("OV2\0") followed by
+  // AES-GCM output produced with the entry id as additionalData. Binding the
+  // id into the GCM tag stops a malicious server swapping ciphertexts between
+  // entries — every entry shares the vault key, so an *unbound* blob would
+  // decrypt fine under any id. Legacy (unprefixed) ciphertexts still decrypt
+  // without AAD and are rebound the next time the entry is written; the magic
+  // is what lets us refuse the unbound fallback for entries known to be bound.
+  var CT_MAGIC = new Uint8Array([0x4f, 0x56, 0x32, 0x00]); // "OV2\0"
+
+  function hasCtMagic(u8) {
+    return (
+      u8.length > CT_MAGIC.length &&
+      u8[0] === CT_MAGIC[0] &&
+      u8[1] === CT_MAGIC[1] &&
+      u8[2] === CT_MAGIC[2] &&
+      u8[3] === CT_MAGIC[3]
+    );
+  }
+
+  function encryptForEntry(id, plaintextBytes) {
+    var iv = randomBytes(12);
+    return subtle
+      .encrypt(
+        { name: "AES-GCM", iv: iv, additionalData: utf8Encode(id) },
+        vaultKey,
+        plaintextBytes
+      )
+      .then(function (ct) {
+        var body = toU8(ct);
+        var out = new Uint8Array(CT_MAGIC.length + body.length);
+        out.set(CT_MAGIC, 0);
+        out.set(body, CT_MAGIC.length);
+        return { iv: iv, ciphertext: out };
+      });
+  }
+
+  // Decrypt an entry ciphertext: id-bound (v2) when the magic prefix is
+  // present, legacy (no AAD) otherwise. The one-in-2^32 legacy blob that
+  // happens to start with the magic bytes fails the bound attempt and falls
+  // back to a legacy decrypt of the whole blob.
+  function decryptForEntry(id, iv, ciphertext) {
+    var ct = toU8(ciphertext);
+    if (hasCtMagic(ct)) {
+      return subtle
+        .decrypt(
+          { name: "AES-GCM", iv: toU8(iv), additionalData: utf8Encode(id) },
+          vaultKey,
+          ct.subarray(CT_MAGIC.length)
+        )
+        .then(
+          function (pt) {
+            return new Uint8Array(pt);
+          },
+          function () {
+            return aesDecrypt(vaultKey, iv, ct);
+          }
+        );
+    }
+    return aesDecrypt(vaultKey, iv, ct);
+  }
+
+  function encryptPayload(id, payload) {
     var bytes = utf8Encode(JSON.stringify(payload));
-    return aesEncrypt(vaultKey, bytes);
+    return encryptForEntry(id, bytes);
   }
 
   function decryptEnvelope(env) {
-    return aesDecrypt(vaultKey, env.iv, env.ciphertext).then(function (bytes) {
+    return decryptForEntry(env.id, env.iv, env.ciphertext).then(function (bytes) {
       var payload = JSON.parse(utf8Decode(bytes));
       payload.id = env.id;
       payload.updatedAt = env.updatedAt;
@@ -417,7 +500,7 @@ window.Vault = (function () {
     };
     var priorP = isNew ? Promise.resolve(null) : entryGetRaw(id);
     return priorP.then(function (prior) {
-      return encryptPayload(payload).then(function (enc) {
+      return encryptPayload(id, payload).then(function (enc) {
         var env = {
           id: id,
           iv: enc.iv,
@@ -468,7 +551,7 @@ window.Vault = (function () {
     requireUnlocked();
     return entryGetRaw(SETTINGS_ID).then(function (env) {
       if (!env || env.deleted || !env.ciphertext) return {};
-      return aesDecrypt(vaultKey, env.iv, env.ciphertext)
+      return decryptForEntry(SETTINGS_ID, env.iv, env.ciphertext)
         .then(function (bytes) {
           try {
             return JSON.parse(utf8Decode(bytes)) || {};
@@ -497,7 +580,7 @@ window.Vault = (function () {
       return settingsGet().then(function (cur) {
         cur.name = name || "";
         var now = Date.now();
-        return aesEncrypt(vaultKey, utf8Encode(JSON.stringify(cur))).then(
+        return encryptForEntry(SETTINGS_ID, utf8Encode(JSON.stringify(cur))).then(
           function (enc) {
             return entryPutRaw({
               id: SETTINGS_ID,
@@ -583,6 +666,9 @@ window.Vault = (function () {
     }
     if (!doc || doc.magic !== EXPORT_MAGIC || !doc.meta) {
       return Promise.reject(new Error("not an Own Vault backup"));
+    }
+    if (!validIterations(doc.meta.iterations)) {
+      return Promise.reject(new Error("backup has an invalid key record"));
     }
     var record = {
       v: doc.meta.v || 1,
@@ -725,7 +811,9 @@ window.Vault = (function () {
   // against a different base rev, which becomes a conflict.
   function applyPulled(remoteDTOs) {
     return entriesGetAll().then(function (envs) {
-      var byId = {};
+      // Null prototype: entry ids are server-supplied strings, so a plain {}
+      // would let an id like "__proto__" clobber the map's prototype.
+      var byId = Object.create(null);
       envs.forEach(function (e) {
         byId[e.id] = e;
       });
@@ -787,6 +875,12 @@ window.Vault = (function () {
   }
 
   function docToMeta(doc) {
+    // Refuse a hostile/corrupt wrapped-key record at ingestion, before it can
+    // replace a good local one (an absurd iteration count would otherwise
+    // hang every subsequent unlock attempt).
+    if (!validIterations(doc.iterations)) {
+      throw new Error("rejected wrapped-key record: bad iteration count");
+    }
     return {
       v: doc.v || 1,
       salt: b64decode(doc.salt),
@@ -846,7 +940,7 @@ window.Vault = (function () {
           var remoteEnv = dtoToEnv(e.remote);
           var theirsP = remoteEnv.deleted
             ? Promise.resolve({ deleted: true })
-            : aesDecrypt(vaultKey, remoteEnv.iv, remoteEnv.ciphertext)
+            : decryptForEntry(e.id, remoteEnv.iv, remoteEnv.ciphertext)
                 .then(function (b) {
                   return JSON.parse(utf8Decode(b));
                 })

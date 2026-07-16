@@ -18,6 +18,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"embed"
 	"encoding/base64"
@@ -26,6 +27,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,6 +37,20 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+// Request-body caps for the sync API. The data is small by nature (a wrapped
+// key record is a few hundred bytes; entries are a few KB of ciphertext), so
+// generous limits still stop one client — on a shared server, one *tenant* —
+// from filling the disk or RAM with a single oversized push.
+const (
+	maxMetaBytes = 64 << 10 // wrapped-key record
+	maxPushBytes = 8 << 20  // full-vault restore push
+)
+
+// Cap on concurrent SSE connections so an unauthenticated client can't
+// exhaust the server with idle /events streams (the endpoint is deliberately
+// tokenless — see the /events handler).
+const maxSSEClients = 256
 
 //go:embed all:web
 var embedded embed.FS
@@ -54,11 +70,16 @@ type hub struct {
 
 func newHub() *hub { return &hub{clients: make(map[chan string]string)} }
 
+// add registers a subscriber, or returns nil when the server is already at
+// its connection cap (the caller should reject the request).
 func (h *hub) add(vault string) chan string {
-	ch := make(chan string, 8)
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.clients) >= maxSSEClients {
+		return nil
+	}
+	ch := make(chan string, 8)
 	h.clients[ch] = vault
-	h.mu.Unlock()
 	return ch
 }
 
@@ -262,6 +283,10 @@ func main() {
 		// reachability probe in app.js connects without it and just rides the
 		// keepalive pings below.
 		ch := h.add(strings.TrimSpace(r.URL.Query().Get("vault")))
+		if ch == nil {
+			http.Error(w, "too many connections", http.StatusServiceUnavailable)
+			return
+		}
 		defer h.remove(ch)
 
 		fmt.Fprintf(w, "retry: 3000\n\nevent: ping\ndata: {}\n\n")
@@ -300,19 +325,75 @@ func main() {
 		http.ServeFileFS(w, r, webRoot, "index.html")
 	})
 
+	handler := secureHeaders(mux)
+
 	// Serve HTTPS as well when mkcert files are present — service workers
 	// (and PWA install) require a secure context on anything but localhost.
+	tlsUp := false
+	tlsPort := ""
 	if _, err := os.Stat(*certFile); err == nil {
 		if _, err := os.Stat(*keyFile); err == nil {
+			tlsUp = true
+			if _, p, err := net.SplitHostPort(*tlsAddr); err == nil {
+				tlsPort = p
+			}
 			go func() {
 				log.Printf("listening on https://localhost%s", *tlsAddr)
-				log.Fatal(http.ListenAndServeTLS(*tlsAddr, *certFile, *keyFile, mux))
+				log.Fatal(http.ListenAndServeTLS(*tlsAddr, *certFile, *keyFile, handler))
 			}()
 		}
 	}
 
+	httpHandler := handler
+	if tlsUp {
+		// With TLS up, plain HTTP stays available only for localhost (desktop
+		// dev, where HTTP is already a secure context). Everything else — e.g.
+		// a phone typing the LAN IP — is redirected to the HTTPS listener so
+		// the sync token and ciphertext never travel in the clear.
+		httpHandler = redirectToTLS(handler, tlsPort)
+	}
+
 	log.Printf("listening on http://localhost%s (dev=%v, auth=%v)", *addr, *dev, *token != "")
-	log.Fatal(http.ListenAndServe(*addr, mux))
+	log.Fatal(http.ListenAndServe(*addr, httpHandler))
+}
+
+// secureHeaders adds browser-side defence-in-depth to every response. The CSP
+// can be strict because the app needs nothing exotic: all scripts and styles
+// are same-origin files (no inline, no eval — htmx 2 works without it), and
+// the only non-'self' source is the blob: manifest that carries the
+// client-side vault name (see app.js). HSTS is only meaningful on the TLS
+// listener, hence the r.TLS gate.
+func secureHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "+
+				"connect-src 'self'; manifest-src 'self' blob:; worker-src 'self'; "+
+				"object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		if r.TLS != nil {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// redirectToTLS sends non-localhost plain-HTTP requests to the HTTPS listener.
+func redirectToTLS(next http.Handler, tlsPort string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		u := "https://" + net.JoinHostPort(host, tlsPort) + r.URL.RequestURI()
+		http.Redirect(w, r, u, http.StatusTemporaryRedirect)
+	})
 }
 
 func defaultDBPath() string {
@@ -336,7 +417,9 @@ func auth(token string, next http.HandlerFunc) http.HandlerFunc {
 					got = strings.TrimPrefix(b, "Bearer ")
 				}
 			}
-			if got != token {
+			// Constant-time compare: the token is the only gate between the
+			// internet and write access, so don't leak match length via timing.
+			if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -414,6 +497,7 @@ func (s *store) handleMeta(h *hub) http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, `{"doc":%s,"rev":%d}`, doc, rev)
 		case http.MethodPut:
+			r.Body = http.MaxBytesReader(w, r.Body, maxMetaBytes)
 			var body struct {
 				Doc json.RawMessage `json:"doc"`
 			}
@@ -510,6 +594,7 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 		if !ok {
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxPushBytes)
 		var body struct {
 			Entries []pushItem `json:"entries"`
 		}

@@ -57,10 +57,16 @@ the front end and no `node_modules`.
   token needed on a trusted network.
 - **Public sync.** Run it on a small VM (typically in Docker) so devices on
   different networks sync. This mode needs two things:
-  - **a `-token`** — the data is ciphertext, but without auth anyone who finds
-    the URL could tamper with or delete it;
+  - **a token** — the data is ciphertext, but without auth anyone who finds
+    the URL could tamper with or delete it. Prefer the `OWNVAULT_TOKEN`
+    environment variable over the `-token` flag on shared machines (a flag is
+    visible to every local user in `ps` output);
   - **HTTPS** — via Let's Encrypt or a reverse proxy such as Caddy. (The mkcert
     certs below are LAN-only.)
+
+  When the built-in TLS listener is active, plain-HTTP requests from anywhere
+  but localhost are redirected to it, so the token and ciphertext never travel
+  unencrypted.
 
 Once installed as a PWA the server is recommended but not required — the app
 works fully offline and just syncs when the server is reachable.
@@ -80,6 +86,12 @@ touch this server at all" gate; it is not per-person.
 
 A shared server costs almost nothing per vault, so a handful of friends can run
 one tiny box between them without trusting each other with anything.
+
+One honest caveat: sharing a server means trusting the others with
+**availability**, not secrecy. Everyone holding the server's token can write to
+the server, so a malicious co-tenant could overwrite or delete another vault's
+(still unreadable) ciphertext. Your own devices and encrypted backups keep full
+copies — but share a server with people you'd trust not to vandalise it.
 
 ### Adding a second device (or joining someone's server)
 

@@ -38,6 +38,28 @@ pattern):
   migration handling (e.g. keep both wrapped keys until every entry carries
   the new key's generation marker).
 
+Hardening rules layered on that design (all in `vault.js` — keep them intact):
+
+- **Entry ciphertexts are id-bound (v2 format)**: a 4-byte `"OV2\0"` magic
+  prefix, then AES-GCM output made with the entry id as `additionalData`.
+  Every entry shares one vault key, so without AAD a malicious server could
+  swap ciphertexts between entries or replay old blobs under any id. Legacy
+  unprefixed ciphertexts still decrypt (no AAD) and are rebound on the next
+  write of that entry; the magic prefix is what stops the legacy fallback
+  being used to defeat the binding on entries known to be bound.
+- **The live vault CryptoKey is non-extractable** (`extractable: false`).
+  Nothing exports it (change-password and backup use the wrapped record), so
+  page script — XSS, a hostile extension — can use it while unlocked but can
+  never read the key material.
+- **KDF iteration counts from the network are bounded** (100k–10M), enforced
+  where records are ingested (`docToMeta` for synced meta, `importVault` for
+  backups) and again in `deriveWrappingKey`. Tampered counts can't leak
+  anything, but an absurd one would hang the device (DoS) and a floor blocks
+  quiet downgrades.
+- **Master password minimum is 12 characters** (create + change, vaultui.js):
+  the vault is offline-brute-forceable from a stolen backup or server DB, so
+  the password carries the whole load.
+
 ## Data model: per-entry encrypted records
 
 The vault is NOT one encrypted blob. Each password entry is its own encrypted
@@ -93,6 +115,22 @@ The server runs wherever the person's needs dictate:
 
 Once the app is installed as a PWA, having the server running is recommended
 but not required — the PWA works fully offline.
+
+Server hardening (in `main.go` — keep these when touching handlers):
+
+- Every response carries a strict CSP (`script-src 'self'`, no inline/eval;
+  `manifest-src 'self' blob:` for the client-generated manifest) plus
+  nosniff / frame-deny / no-referrer; HSTS on the TLS listener only. The app
+  must stay CSP-clean: no inline scripts, styles, or `hx-on` attributes.
+- Token comparison is constant-time (`crypto/subtle`).
+- `/api/meta` and `/api/push` bodies are capped (`http.MaxBytesReader`) so one
+  client/tenant can't fill a shared server's disk or RAM.
+- `/events` has a global connection cap (it is deliberately unauthenticated).
+- When the TLS listener is up, plain HTTP from anything but localhost is
+  redirected to HTTPS, so the sync token never travels in the clear.
+- Trade-off to keep documented, not "fixed" silently: the single server token
+  gates all writes, so co-tenants can vandalise (never read) each other's
+  ciphertext. Per-vault write tokens are future work (TODO.md).
 
 ## Sync & conflicts
 
