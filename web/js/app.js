@@ -413,19 +413,35 @@
   var PING_INTERVAL_MS = 25000; // matches the server's ticker
   var lastPing = Date.now();
 
-  var events = new EventSource("/events");
-  events.onopen = function () {
-    lastPing = Date.now();
-    setNetworkState(true);
-  };
-  events.addEventListener("ping", function () {
-    lastPing = Date.now();
-    setNetworkState(true);
-  });
-  events.onerror = function () {
-    // Fires on every failed auto-reconnect attempt too; dedup'd above.
-    setNetworkState(false);
-  };
+  var events = null;
+  var sseRetryMs = 5000;
+
+  function connectEvents() {
+    var es = new EventSource("/events");
+    events = es;
+    es.onopen = function () {
+      lastPing = Date.now();
+      sseRetryMs = 5000;
+      setNetworkState(true);
+    };
+    es.addEventListener("ping", function () {
+      lastPing = Date.now();
+      setNetworkState(true);
+    });
+    es.onerror = function () {
+      // Fires on every failed auto-reconnect attempt too; dedup'd above.
+      setNetworkState(false);
+      // A non-200 response (e.g. the server's 503 at its SSE connection cap)
+      // fatally CLOSEs the EventSource — per spec the browser never retries
+      // it. Rebuild it ourselves with backoff, or reachability (and the
+      // offline ribbon) would stay wrong for the rest of the session.
+      if (events === es && es.readyState === EventSource.CLOSED) {
+        setTimeout(connectEvents, sseRetryMs);
+        sseRetryMs = Math.min(sseRetryMs * 2, 60000);
+      }
+    };
+  }
+  connectEvents();
 
   // Watchdog for silently dead connections (e.g. wifi up, internet down,
   // no TCP reset) where onerror never fires: two missed pings = offline.

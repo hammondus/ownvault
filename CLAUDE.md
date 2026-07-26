@@ -126,8 +126,9 @@ Server hardening (in `main.go` — keep these when touching handlers):
 - `/api/meta` and `/api/push` bodies are capped (`http.MaxBytesReader`) so one
   client/tenant can't fill a shared server's disk or RAM.
 - `/events` has a global connection cap (it is deliberately unauthenticated).
-- When the TLS listener is up, plain HTTP from anything but localhost is
-  redirected to HTTPS, so the sync token never travels in the clear.
+- When the TLS listener is up, plain HTTP from anything but loopback is
+  redirected to HTTPS, so the sync token never travels in the clear
+  (`-plainhttp` opts out for setups where the HTTPS port isn't reachable).
 - Trade-off to keep documented, not "fixed" silently: the single server token
   gates all writes, so co-tenants can vandalise (never read) each other's
   ciphertext. Per-vault write tokens are future work (TODO.md).

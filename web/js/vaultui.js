@@ -685,15 +685,17 @@
     ]);
   }
 
-  // The password gets a real type="password" input — masked against shoulder
-  // surfing and ineligible for browser spellcheck — with the same reveal
-  // toggle the view modal has.
+  // The password is masked against shoulder surfing with the same CSS the
+  // view modal uses (-webkit-text-security on a type="text" input) rather
+  // than type="password": browser save-password/autofill heuristics key on
+  // the input type, and a real password field here would invite the browser
+  // to capture vault entries into its own (cloud-synced) password store.
   function passwordField(value) {
     var input = el("input", {
-      class: "form-input",
-      type: "password",
+      class: "form-input masked",
+      type: "text",
       name: "password",
-      autocomplete: "new-password",
+      autocomplete: "off",
       spellcheck: "false",
       autocorrect: "off",
       autocapitalize: "off",
@@ -1011,13 +1013,13 @@
       deleteCurrent();
       return;
     }
-    // Edit-form password visibility toggle (flips the input's type).
+    // Edit-form password visibility toggle (flips the CSS mask).
     var revealInput = e.target.closest("[data-reveal-input]");
     if (revealInput) {
       var inp = revealInput.parentNode.querySelector("input");
       if (inp) {
-        var showNow = inp.type === "password";
-        inp.type = showNow ? "text" : "password";
+        var showNow = inp.classList.contains("masked");
+        inp.classList.toggle("masked", !showNow);
         revealInput.textContent = showNow ? "🙈" : "👁";
         revealInput.setAttribute(
           "aria-label",

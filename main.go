@@ -234,6 +234,7 @@ func main() {
 	dev := flag.Bool("dev", false, "serve web/ from disk instead of the embedded copy")
 	dbPath := flag.String("db", "", "SQLite database path (default: ownvault.db next to the executable)")
 	token := flag.String("token", os.Getenv("OWNVAULT_TOKEN"), "shared-secret bearer token required for sync (recommended when public); env OWNVAULT_TOKEN")
+	plainHTTP := flag.Bool("plainhttp", false, "keep serving plain HTTP to non-localhost clients even when the TLS listener is up (e.g. HTTPS port firewalled, or TLS terminated elsewhere)")
 	flag.Parse()
 
 	var webRoot fs.FS
@@ -345,11 +346,13 @@ func main() {
 	}
 
 	httpHandler := handler
-	if tlsUp {
-		// With TLS up, plain HTTP stays available only for localhost (desktop
+	if tlsUp && !*plainHTTP {
+		// With TLS up, plain HTTP stays available only for loopback (desktop
 		// dev, where HTTP is already a secure context). Everything else — e.g.
 		// a phone typing the LAN IP — is redirected to the HTTPS listener so
-		// the sync token and ciphertext never travel in the clear.
+		// the sync token and ciphertext never travel in the clear. -plainhttp
+		// opts out for setups where the redirect would strand clients (HTTPS
+		// port not published/firewalled, or TLS handled by a proxy).
 		httpHandler = redirectToTLS(handler, tlsPort)
 	}
 
@@ -361,8 +364,11 @@ func main() {
 // can be strict because the app needs nothing exotic: all scripts and styles
 // are same-origin files (no inline, no eval — htmx 2 works without it), and
 // the only non-'self' source is the blob: manifest that carries the
-// client-side vault name (see app.js). HSTS is only meaningful on the TLS
-// listener, hence the r.TLS gate.
+// client-side vault name (see app.js). HSTS is sent on the TLS listener and
+// when a reverse proxy reports it terminated TLS (X-Forwarded-Proto) — the
+// documented public deployment, where r.TLS is nil here. Trusting that header
+// is safe for HSTS specifically: browsers ignore the header when it arrives
+// over an insecure connection, so spoofing it on plain HTTP does nothing.
 func secureHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -373,27 +379,40 @@ func secureHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
-		if r.TLS != nil {
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 			h.Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// redirectToTLS sends non-localhost plain-HTTP requests to the HTTPS listener.
+// redirectToTLS sends non-loopback plain-HTTP requests to the HTTPS listener.
 func redirectToTLS(next http.Handler, tlsPort string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
 		}
-		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		if isLoopbackHost(host) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		u := "https://" + net.JoinHostPort(host, tlsPort) + r.URL.RequestURI()
 		http.Redirect(w, r, u, http.StatusTemporaryRedirect)
 	})
+}
+
+// isLoopbackHost covers the whole loopback range (127.0.0.0/8, ::1), not just
+// the literal 127.0.0.1 — addresses like 127.0.0.2 are common for running
+// several local dev services and are just as local.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 func defaultDBPath() string {

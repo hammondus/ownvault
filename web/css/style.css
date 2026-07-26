@@ -672,7 +672,11 @@ body.locked {
   font-size: 1rem;
 }
 
-.field-value.masked {
+/* CSS-only password masking (view value + edit input). Used instead of
+   type="password" so browser save-password/autofill heuristics never see a
+   credential field (vaultui.js passwordField). */
+.field-value.masked,
+.form-input.masked {
   -webkit-text-security: disc;
   text-security: disc;
 }

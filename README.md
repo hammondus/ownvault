@@ -66,7 +66,9 @@ the front end and no `node_modules`.
 
   When the built-in TLS listener is active, plain-HTTP requests from anywhere
   but localhost are redirected to it, so the token and ciphertext never travel
-  unencrypted.
+  unencrypted. If that redirect would strand clients (the HTTPS port isn't
+  reachable, or a reverse proxy terminates TLS in front), opt out with
+  `-plainhttp`.
 
 Once installed as a PWA the server is recommended but not required — the app
 works fully offline and just syncs when the server is reachable.

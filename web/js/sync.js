@@ -158,8 +158,19 @@ window.Sync = (function () {
         return res.json();
       })
       .then(function (data) {
+        // A bad wrapped-key record (hostile co-tenant, corruption) must not
+        // take entry syncing down with it: applyMeta rejects it (docToMeta
+        // enforces the KDF bounds) and we carry on — the good local record
+        // still unlocks the vault. Promise.resolve().then() also routes
+        // applyMeta's synchronous throw into this catch.
         var metaP = data.meta
-          ? Vault.applyMeta(data.meta.doc, data.meta.rev)
+          ? Promise.resolve()
+              .then(function () {
+                return Vault.applyMeta(data.meta.doc, data.meta.rev);
+              })
+              .catch(function (err) {
+                if (window.console) console.warn("ignoring bad server meta:", err);
+              })
           : Promise.resolve();
         return metaP
           .then(function () {
@@ -192,12 +203,39 @@ window.Sync = (function () {
       .then(function () {
         return Vault.pendingPush();
       })
-      .then(function (items) {
-        if (!items.length) return;
+      .then(pushInBatches);
+  }
+
+  // The server caps /api/push bodies (8MB) so one tenant can't fill a shared
+  // server's RAM, but a full-vault restore marks *every* entry dirty at once —
+  // a single unchunked POST of a big vault would exceed the cap on every
+  // retry, wedging sync permanently. So split pushes well below the cap; each
+  // batch is confirmed (revs recorded) before the next is sent, so an
+  // interruption just leaves the remainder dirty for the next sync.
+  var PUSH_BATCH_BYTES = 2 * 1024 * 1024;
+
+  function pushInBatches(items) {
+    if (!items.length) return;
+    var batches = [];
+    var cur = [];
+    var curBytes = 0;
+    items.forEach(function (it) {
+      var n = JSON.stringify(it).length + 1;
+      if (cur.length && curBytes + n > PUSH_BATCH_BYTES) {
+        batches.push(cur);
+        cur = [];
+        curBytes = 0;
+      }
+      cur.push(it);
+      curBytes += n;
+    });
+    if (cur.length) batches.push(cur);
+    return batches.reduce(function (p, batch) {
+      return p.then(function () {
         return api("/api/push", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entries: items })
+          body: JSON.stringify({ entries: batch })
         })
           .then(function (res) {
             if (res.status === 401) throw { auth: true };
@@ -208,6 +246,7 @@ window.Sync = (function () {
             return Vault.confirmPushed(data.results);
           });
       });
+    }, Promise.resolve());
   }
 
   // Full sync cycle. Never rejects: offline is a normal state, surfaced via
@@ -290,19 +329,36 @@ window.Sync = (function () {
 
   /* ---------- SSE: react to other devices ---------- */
 
+  var sseRetryTimer = null;
+  var sseRetryMs = 5000;
+
   function subscribe() {
     if (events || !isEnabled()) return;
+    clearTimeout(sseRetryTimer);
     try {
       // Scope change notifications to our vault so a shared server doesn't wake
       // us for other people's writes. (app.js keeps a separate, unscoped
       // EventSource purely for reachability.)
       var vid = getVaultId();
-      events = new EventSource("/events" + (vid ? "?vault=" + encodeURIComponent(vid) : ""));
-      events.addEventListener("changed", function () {
+      var es = new EventSource("/events" + (vid ? "?vault=" + encodeURIComponent(vid) : ""));
+      events = es;
+      es.onopen = function () {
+        sseRetryMs = 5000;
+      };
+      es.addEventListener("changed", function () {
         syncSoon();
       });
-      events.onerror = function () {
-        /* EventSource auto-reconnects */
+      es.onerror = function () {
+        // Dropped connections auto-reconnect, but a non-200 response (the
+        // server's 503 at its SSE connection cap) fatally CLOSEs the
+        // EventSource per spec — the browser never retries it. Rebuild it
+        // ourselves with backoff so one transient cap hit doesn't kill change
+        // notifications for the whole session.
+        if (events === es && es.readyState === EventSource.CLOSED) {
+          unsubscribe();
+          sseRetryTimer = setTimeout(subscribe, sseRetryMs);
+          sseRetryMs = Math.min(sseRetryMs * 2, 60000);
+        }
       };
     } catch (e) {
       /* ignore */
@@ -310,6 +366,7 @@ window.Sync = (function () {
   }
 
   function unsubscribe() {
+    clearTimeout(sseRetryTimer);
     if (events) {
       try {
         events.close();

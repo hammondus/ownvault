@@ -667,32 +667,32 @@ window.Vault = (function () {
     if (!doc || doc.magic !== EXPORT_MAGIC || !doc.meta) {
       return Promise.reject(new Error("not an Own Vault backup"));
     }
-    if (!validIterations(doc.meta.iterations)) {
-      return Promise.reject(new Error("backup has an invalid key record"));
+    // The whole decode runs inside try/catch: b64decode (atob) throws
+    // synchronously on a truncated/corrupted file, and this function's
+    // callers only handle rejections. docToMeta is the single copy of the
+    // KDF-bounds check (a hostile backup file is an ingestion point too).
+    var record, envs;
+    try {
+      record = docToMeta(doc.meta);
+      record.rev = 0;
+      record.dirty = true;
+      envs = (doc.entries || []).map(function (e) {
+        return {
+          id: e.id,
+          iv: e.iv ? b64decode(e.iv) : null,
+          ciphertext: e.ciphertext ? b64decode(e.ciphertext) : null,
+          updatedAt: e.updatedAt,
+          deleted: !!e.deleted,
+          rev: 0,
+          dirty: true,
+          restored: true, // authoritative: wins over the server on next sync
+          conflict: false,
+          remote: null
+        };
+      });
+    } catch (e) {
+      return Promise.reject(new Error("backup file is invalid or corrupted"));
     }
-    var record = {
-      v: doc.meta.v || 1,
-      salt: b64decode(doc.meta.salt),
-      iterations: doc.meta.iterations,
-      wrapIv: b64decode(doc.meta.wrapIv),
-      wrapped: b64decode(doc.meta.wrapped),
-      rev: 0,
-      dirty: true
-    };
-    var envs = (doc.entries || []).map(function (e) {
-      return {
-        id: e.id,
-        iv: e.iv ? b64decode(e.iv) : null,
-        ciphertext: e.ciphertext ? b64decode(e.ciphertext) : null,
-        updatedAt: e.updatedAt,
-        deleted: !!e.deleted,
-        rev: 0,
-        dirty: true,
-        restored: true, // authoritative: wins over the server on next sync
-        conflict: false,
-        remote: null
-      };
-    });
     lock();
     // Full reconcile next sync: forget the cursor so the pull returns the whole
     // server state to rebase against and to pick up server-only entries.
