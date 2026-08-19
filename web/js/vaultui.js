@@ -467,12 +467,17 @@
           byId("unlock-pw").select();
         }
       },
-      function () {
+      function (failure) {
         // Never leave the button dead: surface the failure instead of the old
         // silent unhandled-rejection (which is what iOS-over-HTTP hit).
-        err.textContent = webCryptoReady()
-          ? "Couldn't unlock — an unexpected error occurred."
-          : INSECURE_MSG;
+        // Fatal derivation errors (e.g. the Argon2 module didn't load) carry
+        // a user-facing message — show it rather than a generic shrug.
+        err.textContent =
+          failure && failure.fatal && failure.message
+            ? failure.message
+            : webCryptoReady()
+              ? "Couldn't unlock — an unexpected error occurred."
+              : INSECURE_MSG;
         show(err, true);
       }
     );

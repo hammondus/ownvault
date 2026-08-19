@@ -1,13 +1,13 @@
 # TODO
 
-## Security (future hardening)
-
-- Argon2id key derivation (via a small WASM module) in place of PBKDF2 — far
-  more resistant to GPU cracking. WebCrypto has no native support, hence WASM.
-  Needs a KDF field in the wrapped-key record (`v` is there for this) and a
-  migrate-on-password-change path.
+(Nothing pending.)
 
 ## Done
+
+- Argon2id key derivation (vendored argon2-browser WASM, 64 MiB / 3 passes)
+  for all new wrapped-key records; v1 PBKDF2 records still unlock and migrate
+  to Argon2id on the next password change or full re-encrypt. Provenance and
+  the CSP change in DESIGN-DECISIONS.md.
 
 - Full re-encrypt (Settings): fresh vault key + new master password, every
   entry re-encrypted, committed in one atomic IndexedDB transaction (a crash

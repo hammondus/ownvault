@@ -9,7 +9,7 @@
  * Bump VERSION to force old caches to be discarded on the next visit.
  */
 
-var VERSION = "ownvault-v24";
+var VERSION = "ownvault-v25";
 
 // How long to wait for the server before falling back to cache. An
 // unreachable host (machine asleep / other network) doesn't refuse the
@@ -43,6 +43,7 @@ var PRECACHE = [
   "/js/sync.js",
   "/js/vaultui.js",
   "/js/htmx.min.js",
+  "/js/argon2.min.js",
   "/pages/passwords.html",
   "/pages/settings.html",
   "/pages/about.html",

@@ -39,15 +39,33 @@ window.Vault = (function () {
   // the passwords list/search/count and never raises a user conflict.
   var SETTINGS_ID = "__vault__";
 
-  // PBKDF2-SHA256 work factor. High by design: the wrapped key is the only
-  // thing standing between an attacker with the ciphertext and the vault.
+  // Wrapped-key record KDF versions:
+  //   v1 — PBKDF2-SHA256 (WebCrypto). Kept decodable forever: old backups
+  //        and not-yet-migrated vaults still unlock.
+  //   v2 — Argon2id via the vendored WASM module (web/js/argon2.min.js,
+  //        argon2-browser). Memory-hard, so GPU farms lose most of their
+  //        edge. All NEW records are v2 (create, password change, full
+  //        re-encrypt) whenever the module is loaded, which is the
+  //        migrate-on-password-change path: v1 vaults move to v2 the next
+  //        time the vault key is re-wrapped. If the module failed to load,
+  //        wrapping falls back to v1 rather than bricking the flow.
   var PBKDF2_ITERATIONS = 600000;
-  // Bounds on the iteration count accepted from synced meta docs and backup
-  // files. Tampering can't reveal anything (the unwrap just fails), but an
-  // absurd count from a hostile server would hang the device deriving the
-  // key, and the floor keeps any future path from quietly downgrading the KDF.
+  // Bounds on KDF params accepted from synced meta docs and backup files.
+  // Tampering can't reveal anything (the unwrap just fails), but absurd
+  // params from a hostile server would hang or OOM the device deriving the
+  // key, and the floors keep any future path from quietly downgrading the
+  // KDF.
   var MIN_ITERATIONS = 100000;
   var MAX_ITERATIONS = 10000000;
+  // Argon2id defaults: 64 MiB, 3 passes, 1 lane — comfortably above the
+  // OWASP minimums; ~0.5-2s per unlock depending on the device.
+  var ARGON2_MEM_KIB = 65536;
+  var ARGON2_TIME = 3;
+  var ARGON2_PAR = 1;
+  var ARGON2_MEM_MIN = 8192;    // 8 MiB — below this the memory-hardness is gone
+  var ARGON2_MEM_MAX = 1048576; // 1 GiB — above this phones OOM (DoS)
+  var ARGON2_TIME_MAX = 10;
+  var ARGON2_PAR_MAX = 4;
   var EXPORT_MAGIC = "ownvault.backup";
   // v2 adds the (non-secret) vaultId so a restore can reattach to the same
   // server namespace. v1 files (no vaultId) still import — they just merge into
@@ -179,9 +197,62 @@ window.Vault = (function () {
     );
   }
 
-  function deriveWrappingKey(password, salt, iterations) {
-    if (!validIterations(iterations)) {
-      return Promise.reject(new Error("implausible KDF iteration count"));
+  function posInt(n, min, max) {
+    return typeof n === "number" && isFinite(n) && n >= min && n <= max;
+  }
+
+  // Validates the KDF params of a record or wire doc (same field names).
+  function validKdfParams(r) {
+    if ((r.v || 1) === 2) {
+      return (
+        posInt(r.mem, ARGON2_MEM_MIN, ARGON2_MEM_MAX) &&
+        posInt(r.time, 1, ARGON2_TIME_MAX) &&
+        posInt(r.par, 1, ARGON2_PAR_MAX)
+      );
+    }
+    return validIterations(r.iterations);
+  }
+
+  function argon2Available() {
+    return !!(window.argon2 && window.argon2.hash);
+  }
+
+  // Derive the wrapping key per the record's KDF (v2 Argon2id, v1 PBKDF2).
+  // Rejections carry err.fatal=true when the failure is NOT a wrong password
+  // (bad params, missing WASM module), so unlock() can tell them apart.
+  function deriveWrappingKey(password, record) {
+    if (!validKdfParams(record)) {
+      var bad = new Error("implausible KDF parameters");
+      bad.fatal = true;
+      return Promise.reject(bad);
+    }
+    if ((record.v || 1) === 2) {
+      if (!argon2Available()) {
+        var e = new Error(
+          "The Argon2 engine didn't load — reload the app and try again."
+        );
+        e.fatal = true;
+        return Promise.reject(e);
+      }
+      return window.argon2
+        .hash({
+          pass: password,
+          salt: toU8(record.salt),
+          time: record.time,
+          mem: record.mem,
+          parallelism: record.par,
+          hashLen: 32,
+          type: window.argon2.ArgonType.Argon2id
+        })
+        .then(function (res) {
+          return subtle.importKey(
+            "raw",
+            res.hash,
+            { name: "AES-GCM" },
+            false,
+            ["encrypt", "decrypt"]
+          );
+        });
     }
     return subtle
       .importKey("raw", utf8Encode(password), "PBKDF2", false, ["deriveKey"])
@@ -189,8 +260,8 @@ window.Vault = (function () {
         return subtle.deriveKey(
           {
             name: "PBKDF2",
-            salt: toU8(salt),
-            iterations: iterations,
+            salt: toU8(record.salt),
+            iterations: record.iterations,
             hash: "SHA-256"
           },
           baseKey,
@@ -219,20 +290,19 @@ window.Vault = (function () {
   }
 
   // Build a fresh wrapped-key record around an (already imported) vault key,
-  // using the given password. Returns the meta record to store.
+  // using the given password. Always the strongest available KDF: Argon2id
+  // (v2) when the WASM module loaded, PBKDF2 (v1) otherwise — this is also
+  // the migrate-on-rewrap path for old v1 vaults (password change and full
+  // re-encrypt both come through here).
   function wrapVaultKey(rawVaultKey, password) {
-    var salt = randomBytes(16);
-    return deriveWrappingKey(password, salt, PBKDF2_ITERATIONS).then(function (
-      wrappingKey
-    ) {
+    var record = argon2Available()
+      ? { v: 2, salt: randomBytes(16), mem: ARGON2_MEM_KIB, time: ARGON2_TIME, par: ARGON2_PAR }
+      : { v: 1, salt: randomBytes(16), iterations: PBKDF2_ITERATIONS };
+    return deriveWrappingKey(password, record).then(function (wrappingKey) {
       return aesEncrypt(wrappingKey, rawVaultKey).then(function (out) {
-        return {
-          v: 1,
-          salt: salt,
-          iterations: PBKDF2_ITERATIONS,
-          wrapIv: out.iv,
-          wrapped: out.ciphertext
-        };
+        record.wrapIv = out.iv;
+        record.wrapped = out.ciphertext;
+        return record;
       });
     });
   }
@@ -240,11 +310,9 @@ window.Vault = (function () {
   // Returns the raw vault-key bytes on success; rejects on wrong password
   // (AES-GCM auth failure) or a malformed record.
   function unwrapVaultKey(record, password) {
-    return deriveWrappingKey(password, record.salt, record.iterations).then(
-      function (wrappingKey) {
-        return aesDecrypt(wrappingKey, record.wrapIv, record.wrapped);
-      }
-    );
+    return deriveWrappingKey(password, record).then(function (wrappingKey) {
+      return aesDecrypt(wrappingKey, record.wrapIv, record.wrapped);
+    });
   }
 
   // Per-vault write credential for the sync server: SHA-256 over a domain
@@ -450,7 +518,10 @@ window.Vault = (function () {
           requestPersistence();
           return true;
         })
-        .catch(function () {
+        .catch(function (e) {
+          // A fatal derivation error (Argon2 module missing, hostile KDF
+          // params) is NOT a wrong password — surface it instead of lying.
+          if (e && e.fatal) throw e;
           // AES-GCM auth failure === wrong password.
           return false;
         });
@@ -1012,13 +1083,7 @@ window.Vault = (function () {
         version: EXPORT_VERSION,
         exportedAt: Date.now(),
         vaultId: vaultId || "",
-        meta: {
-          v: record.v,
-          salt: b64encode(record.salt),
-          iterations: record.iterations,
-          wrapIv: b64encode(record.wrapIv),
-          wrapped: b64encode(record.wrapped)
-        },
+        meta: metaToDoc(record),
         entries: envs.map(function (e) {
           return {
             id: e.id,
@@ -1259,29 +1324,43 @@ window.Vault = (function () {
   }
 
   function metaToDoc(record) {
-    return {
-      v: record.v,
+    var doc = {
+      v: record.v || 1,
       salt: b64encode(record.salt),
-      iterations: record.iterations,
       wrapIv: b64encode(record.wrapIv),
       wrapped: b64encode(record.wrapped)
     };
+    if (doc.v === 2) {
+      doc.mem = record.mem;
+      doc.time = record.time;
+      doc.par = record.par;
+    } else {
+      doc.iterations = record.iterations;
+    }
+    return doc;
   }
 
   function docToMeta(doc) {
     // Refuse a hostile/corrupt wrapped-key record at ingestion, before it can
-    // replace a good local one (an absurd iteration count would otherwise
-    // hang every subsequent unlock attempt).
-    if (!validIterations(doc.iterations)) {
-      throw new Error("rejected wrapped-key record: bad iteration count");
+    // replace a good local one (absurd KDF params would otherwise hang or OOM
+    // every subsequent unlock attempt).
+    if (!validKdfParams(doc)) {
+      throw new Error("rejected wrapped-key record: bad KDF parameters");
     }
-    return {
+    var rec = {
       v: doc.v || 1,
       salt: b64decode(doc.salt),
-      iterations: doc.iterations,
       wrapIv: b64decode(doc.wrapIv),
       wrapped: b64decode(doc.wrapped)
     };
+    if (rec.v === 2) {
+      rec.mem = doc.mem;
+      rec.time = doc.time;
+      rec.par = doc.par;
+    } else {
+      rec.iterations = doc.iterations;
+    }
+    return rec;
   }
 
   // The wrapped-key record to push if it hasn't been synced yet, else null.

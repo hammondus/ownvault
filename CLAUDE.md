@@ -19,10 +19,18 @@ pattern):
 
 - A random **vault key** (AES-GCM) is generated once and encrypts all
   entries.
-- Master password → PBKDF2 → **wrapping key**, which encrypts only the vault
-  key. The resulting **wrapped-key record** (wrapped vault key + PBKDF2 salt
-  + iteration count) is one small piece of vault metadata — none of it is
-  secret, and it must survive export/import and sync alongside the entries.
+- Master password → KDF → **wrapping key**, which encrypts only the vault
+  key. The KDF is versioned in the record: `v: 2` = Argon2id (64 MiB / 3
+  passes / 1 lane, via the vendored WASM module `web/js/argon2.min.js` —
+  WebCrypto has no Argon2), used for every new record; `v: 1` = PBKDF2-SHA256
+  600k stays decodable forever (old vaults and backups). Because every
+  re-wrap goes through `wrapVaultKey`, v1 vaults migrate to Argon2id
+  automatically on their next password change or full re-encrypt. If the WASM
+  module fails to load, wrapping falls back to v1 and unlock of a v2 record
+  reports the module failure (not "wrong password"). The resulting
+  **wrapped-key record** (wrapped vault key + salt + KDF params) is one small
+  piece of vault metadata — none of it is secret, and it must survive
+  export/import and sync alongside the entries.
 - Unlock = attempt to unwrap the vault key. A wrong master password is
   detected by AES-GCM authentication failure on that one record — immediate,
   unambiguous, and no separate password hash is stored anywhere.
@@ -59,11 +67,12 @@ Hardening rules layered on that design (all in `vault.js` — keep them intact):
   Nothing exports it (change-password and backup use the wrapped record), so
   page script — XSS, a hostile extension — can use it while unlocked but can
   never read the key material.
-- **KDF iteration counts from the network are bounded** (100k–10M), enforced
-  where records are ingested (`docToMeta` for synced meta, `importVault` for
-  backups) and again in `deriveWrappingKey`. Tampered counts can't leak
-  anything, but an absurd one would hang the device (DoS) and a floor blocks
-  quiet downgrades.
+- **KDF params from the network are bounded** — PBKDF2 iterations 100k–10M,
+  Argon2 memory 8 MiB–1 GiB / passes 1–10 / lanes 1–4 — enforced where
+  records are ingested (`docToMeta` for synced meta, `importVault` for
+  backups) and again in `deriveWrappingKey`. Tampered params can't leak
+  anything, but absurd ones would hang or OOM the device (DoS) and the
+  floors block quiet downgrades.
 - **Master password minimum is 12 characters** (create + change, vaultui.js):
   the vault is offline-brute-forceable from a stolen backup or server DB, so
   the password carries the whole load.
@@ -126,7 +135,9 @@ but not required — the PWA works fully offline.
 
 Server hardening (in `main.go` — keep these when touching handlers):
 
-- Every response carries a strict CSP (`script-src 'self'`, no inline/eval;
+- Every response carries a strict CSP (`script-src 'self' 'wasm-unsafe-eval'`
+  — the wasm allowance admits only WebAssembly compilation for the Argon2id
+  module, never JS eval; no inline scripts;
   `manifest-src 'self' blob:` for the client-generated manifest) plus
   nosniff / frame-deny / no-referrer; HSTS on the TLS listener only. The app
   must stay CSP-clean: no inline scripts, styles, or `hx-on` attributes.

@@ -20,7 +20,9 @@ without ever being able to read it.
 ## How the crypto works (the short version)
 
 - A random **vault key** (AES-GCM) encrypts every entry individually.
-- Your **master password** → PBKDF2 (600k iterations) → a **wrapping key** that
+- Your **master password** → Argon2id (64 MiB, memory-hard, so GPU farms lose
+  most of their edge; older vaults use PBKDF2 at 600k iterations until their
+  next password change) → a **wrapping key** that
   encrypts *only* the vault key. That wrapped-key record is the sole unlock
   artifact — a wrong password simply fails to decrypt it. No password hash is
   stored anywhere, and there is **no recovery**: lose the master password and

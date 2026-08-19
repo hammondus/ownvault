@@ -4,6 +4,36 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Argon2id via a vendored WASM module (2026-08)
+
+WebCrypto has no Argon2, and a memory-hard KDF hand-rolled in JS would be
+both slower (fewer passes affordable in the same unlock latency) and riskier
+(fresh crypto code) than the reference implementation. So this is the one
+place the no-dependency rule bends, with provenance pinned:
+
+- **Vendored file**: `web/js/argon2.min.js` — the `argon2-bundled.min.js`
+  build from **argon2-browser 1.18.0** (MIT, license alongside as
+  `argon2.LICENSE`; the Emscripten-compiled Argon2 reference C, WASM inlined
+  as base64 so it's a single file with no loader path issues).
+- **SHA-256 of the vendored file**:
+  `77c64b946baf1a5116dc591f4b9965d636b1b455f75edd2d4a587cb75e01687b`
+- **SHA-256 of the npm tarball it came from**
+  (`https://registry.npmjs.org/argon2-browser/-/argon2-browser-1.18.0.tgz`):
+  `cdb11795a4971bde095fe6b836aa424de50c4558ed4b9505bc74111eee7f6d35`
+- The file contains no `eval(`; the CSP gains `'wasm-unsafe-eval'`, which
+  admits only WebAssembly compilation — the JS string-to-code paths stay
+  blocked.
+
+Parameters: 64 MiB / 3 passes / 1 lane — above the OWASP minimums, ~0.5–2s
+per unlock. Ingestion bounds (8 MiB–1 GiB, ≤10 passes, ≤4 lanes) mirror the
+PBKDF2 iteration bounds: hostile params can't leak anything, but unbounded
+ones are a hang/OOM DoS.
+
+Fallback policy: if the module didn't load, `wrapVaultKey` falls back to a
+v1 PBKDF2 record rather than bricking vault creation, and unlocking a v2
+record reports the module failure explicitly (an `err.fatal` rejection)
+instead of the misleading "incorrect master password".
+
 ## Full re-encrypt: atomicity instead of migration markers (2026-08)
 
 CLAUDE.md originally sketched interruption safety for full re-encrypt as

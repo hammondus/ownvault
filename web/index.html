@@ -199,6 +199,9 @@
   <div id="print-sheet" class="print-sheet" aria-hidden="true"></div>
 
   <script src="/js/htmx.min.js"></script>
+  <!-- Argon2id KDF (vendored argon2-browser; WASM inlined). Must load before
+       vault.js so wrapVaultKey sees it. -->
+  <script src="/js/argon2.min.js"></script>
   <script src="/js/pwstrength.js"></script>
   <script src="/js/vault.js"></script>
   <script src="/js/sync.js"></script>

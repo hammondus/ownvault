@@ -404,8 +404,10 @@ func main() {
 func secureHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
+		// 'wasm-unsafe-eval' admits ONLY WebAssembly compilation (the Argon2id
+		// KDF module), not JS eval — the string-to-code paths stay blocked.
 		h.Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "+
+			"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; "+
 				"connect-src 'self'; manifest-src 'self' blob:; worker-src 'self'; "+
 				"object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
