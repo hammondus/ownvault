@@ -129,9 +129,19 @@ Server hardening (in `main.go` — keep these when touching handlers):
 - When the TLS listener is up, plain HTTP from anything but loopback is
   redirected to HTTPS, so the sync token never travels in the clear
   (`-plainhttp` opts out for setups where the HTTPS port isn't reachable).
-- Trade-off to keep documented, not "fixed" silently: the single server token
-  gates all writes, so co-tenants can vandalise (never read) each other's
-  ciphertext. Per-vault write tokens are future work (TODO.md).
+- Per-vault write auth (`X-Vault-Write`): the client derives a credential from
+  the vault key (`vault.js` `deriveWriteAuth`, SHA-256 over a domain tag + the
+  raw key, computed at the only moments the raw bytes exist); the server
+  claims it hash-stored on a vault's first write (TOFU, `vault_auth` table)
+  and requires it on every write after. So co-tenants on a shared server
+  can't overwrite each other's ciphertext, with no extra secret to copy
+  between devices — unlocking IS the proof. Reads stay gated by the server
+  token + unguessable vault id (a fresh device must pull the wrapped-key
+  record before it can unlock). `X-Vault-Write-New` on `/api/meta` PUT
+  rotates the credential (used by full re-encrypt, which replaces the vault
+  key). Remaining documented trade-off: anyone with the server token and a
+  vault id can still *read* that vault's ciphertext and squat an
+  as-yet-unclaimed (never-written) vault id.
 
 ## Sync & conflicts
 

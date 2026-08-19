@@ -18,6 +18,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"embed"
@@ -179,6 +180,10 @@ CREATE TABLE IF NOT EXISTS meta (
   vault_id TEXT PRIMARY KEY,
   doc      TEXT NOT NULL,
   rev      INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vault_auth (
+  vault_id   TEXT PRIMARY KEY,
+  token_hash BLOB NOT NULL
 );`
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
@@ -604,6 +609,81 @@ func requireVault(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return v, true
 }
 
+/* ==================== per-vault write auth ==================== */
+
+// Per-vault write credential (X-Vault-Write): the client derives it from the
+// vault key (SHA-256, one-way — it reveals nothing about the key), so every
+// device that can unlock a vault automatically proves write rights, with no
+// extra secret to copy around. Trust-on-first-use: the first write to a vault
+// claims it by storing the credential's hash; every later write must present
+// the same credential. This closes the shared-server gap where any co-tenant
+// holding the server-wide -token could overwrite (never read) another
+// tenant's ciphertext. Reads stay gated by the server token + the unguessable
+// vault id: ciphertext is not secret, and a fresh device must be able to pull
+// the wrapped-key record before it can unlock anything.
+//
+// Rotation (X-Vault-Write-New on /api/meta PUT): a full re-encrypt replaces
+// the vault key, so the client proves the old credential and hands over the
+// new one in the same meta write that installs the new wrapped-key record.
+//
+// The stored hash is SHA-256 of the (already high-entropy, 256-bit) header
+// value, so a leaked server DB doesn't hand out write credentials.
+
+func writeAuthToken(r *http.Request) string {
+	t := r.Header.Get("X-Vault-Write")
+	if len(t) > 200 {
+		return ""
+	}
+	return t
+}
+
+// checkWriteAuth verifies (or first-use-claims) the vault's write credential
+// inside the caller's transaction. newToken, when non-empty and the old
+// credential verified, replaces the stored hash (rotation).
+func checkWriteAuth(tx *sql.Tx, vault, token, newToken string) (bool, error) {
+	if token == "" {
+		return false, nil
+	}
+	sum := sha256.Sum256([]byte(token))
+	var stored []byte
+	err := tx.QueryRow(`SELECT token_hash FROM vault_auth WHERE vault_id = ?`, vault).Scan(&stored)
+	if err == sql.ErrNoRows {
+		if newToken != "" { // claim with the newer credential when rotating
+			sum = sha256.Sum256([]byte(newToken))
+		}
+		_, err = tx.Exec(`INSERT INTO vault_auth (vault_id, token_hash) VALUES (?, ?)`, vault, sum[:])
+		return err == nil, err
+	}
+	if err != nil {
+		return false, err
+	}
+	if subtle.ConstantTimeCompare(stored, sum[:]) != 1 {
+		return false, nil
+	}
+	if newToken != "" && len(newToken) <= 200 {
+		rot := sha256.Sum256([]byte(newToken))
+		if _, err := tx.Exec(
+			`UPDATE vault_auth SET token_hash = ? WHERE vault_id = ?`, rot[:], vault); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// requireWriteAuth wraps checkWriteAuth with the HTTP error response.
+func requireWriteAuth(w http.ResponseWriter, r *http.Request, tx *sql.Tx, vault string) bool {
+	ok, err := checkWriteAuth(tx, vault, writeAuthToken(r), r.Header.Get("X-Vault-Write-New"))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return false
+	}
+	if !ok {
+		http.Error(w, "vault write credential missing or wrong", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 /* ==================== handlers ==================== */
 
 // A light probe (reachability / auth check). Reports the caller's own vault
@@ -661,6 +741,9 @@ func (s *store) handleMeta(h *hub) http.HandlerFunc {
 				return
 			}
 			defer tx.Rollback()
+			if !requireWriteAuth(w, r, tx, vault) {
+				return
+			}
 			rev, err := nextRev(tx, vault)
 			if err != nil {
 				http.Error(w, err.Error(), 500)
@@ -768,6 +851,10 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 			return
 		}
 		defer tx.Rollback()
+
+		if !requireWriteAuth(w, r, tx, vault) {
+			return
+		}
 
 		for _, it := range body.Entries {
 			var curRev int64

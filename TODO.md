@@ -6,14 +6,17 @@
   more resistant to GPU cracking. WebCrypto has no native support, hence WASM.
   Needs a KDF field in the wrapped-key record (`v` is there for this) and a
   migrate-on-password-change path.
-- Per-vault write tokens, so co-tenants on a shared server can't overwrite each
-  other's ciphertext (today the single server token gates all writes).
 - "Full re-encrypt" action for suspected compromise (new vault key, every entry
   re-encrypted) — see CLAUDE.md caveat under the crypto design. Would also
   rebind any remaining legacy (pre-AAD) ciphertexts in one sweep.
 
 ## Done
 
+- Per-vault write auth: a credential derived from the vault key
+  (unlock = proof of write rights, nothing extra to copy between devices),
+  claimed hash-stored on first write (TOFU) and required on every write after.
+  Co-tenants can no longer overwrite each other's ciphertext. See
+  DESIGN-DECISIONS.md for why it's derived rather than minted.
 - Password strength meter on the create and change-password forms
   (pwstrength.js, ~150 lines, no dependency): pool entropy discounted for
   repeats/sequences/keyboard runs, a l33t-normalised common-password list, and

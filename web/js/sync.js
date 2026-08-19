@@ -141,6 +141,10 @@ window.Sync = (function () {
     if (t) h["X-Vault-Token"] = t;
     var v = getVaultId();
     if (v) h["X-Vault-Id"] = v;
+    // Per-vault write credential, derived from the vault key on unlock
+    // (vault.js). The server requires it on writes; harmless on reads.
+    var wa = window.Vault && Vault.getWriteAuth ? Vault.getWriteAuth() : "";
+    if (wa) h["X-Vault-Write"] = wa;
     return h;
   }
 
@@ -183,6 +187,10 @@ window.Sync = (function () {
   }
 
   function push() {
+    // Writes need the per-vault credential, which only exists while unlocked.
+    // A debounced sync can fire just after a lock; skip the push half — the
+    // dirty flags survive, and the next unlocked sync pushes them.
+    if (!Vault.getWriteAuth()) return Promise.resolve();
     return Vault.pendingMeta()
       .then(function (metaDoc) {
         if (!metaDoc) return;
@@ -193,6 +201,7 @@ window.Sync = (function () {
         })
           .then(function (res) {
             if (res.status === 401) throw { auth: true };
+            if (res.status === 403) throw { writeAuth: true };
             if (!res.ok) throw new Error("meta " + res.status);
             return res.json();
           })
@@ -239,6 +248,7 @@ window.Sync = (function () {
         })
           .then(function (res) {
             if (res.status === 401) throw { auth: true };
+            if (res.status === 403) throw { writeAuth: true };
             if (!res.ok) throw new Error("push " + res.status);
             return res.json();
           })
@@ -288,6 +298,11 @@ window.Sync = (function () {
         syncing = false;
         if (err && err.auth) {
           emit({ state: "error", ok: false, message: "Sync auth failed — check token", conflicts: lastStatus.conflicts });
+        } else if (err && err.writeAuth) {
+          // Another vault (different master password/key) already claimed
+          // this Vault ID on the server, or the vault was re-encrypted
+          // elsewhere and this device hasn't picked up the new key yet.
+          emit({ state: "error", ok: false, message: "Server refused this vault's write credential", conflicts: lastStatus.conflicts });
         } else {
           emit({ state: "offline", ok: false, message: "Sync unavailable", conflicts: lastStatus.conflicts });
         }

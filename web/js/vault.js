@@ -58,6 +58,7 @@ window.Vault = (function () {
 
   var db = null; // IDBDatabase, opened lazily
   var vaultKey = null; // CryptoKey when unlocked, else null
+  var writeAuth = null; // per-vault write credential, derived alongside vaultKey
   var changeCb = null; // notified after any entry mutation
 
   /* ==================== small helpers ==================== */
@@ -246,6 +247,30 @@ window.Vault = (function () {
     );
   }
 
+  // Per-vault write credential for the sync server: SHA-256 over a domain
+  // tag + the raw vault key. One-way, so it reveals nothing about the key;
+  // deterministic, so every device that can unlock the vault derives the
+  // same value with no extra secret to copy around. The server stores its
+  // hash on first write and requires it on every write after that (TOFU),
+  // which stops co-tenants on a shared server overwriting this vault's
+  // ciphertext. Derived here — the only moments the raw key bytes exist —
+  // because the imported CryptoKey is deliberately non-extractable.
+  function deriveWriteAuth(rawVaultKey) {
+    var tag = utf8Encode("ownvault-write-v1");
+    var raw = toU8(rawVaultKey);
+    var buf = new Uint8Array(tag.length + raw.length);
+    buf.set(tag, 0);
+    buf.set(raw, tag.length);
+    return subtle.digest("SHA-256", buf).then(function (sum) {
+      var u8 = toU8(sum);
+      var hex = "";
+      for (var i = 0; i < u8.length; i++) {
+        hex += ("0" + u8[i].toString(16)).slice(-2);
+      }
+      return hex;
+    });
+  }
+
   function importVaultKey(rawBytes) {
     // extractable: false — nothing ever exports the live key (change-password
     // and backup both work from the wrapped record, not the CryptoKey), so
@@ -388,10 +413,14 @@ window.Vault = (function () {
           return metaPut(record);
         })
         .then(function () {
-          return importVaultKey(rawVaultKey);
+          return Promise.all([
+            importVaultKey(rawVaultKey),
+            deriveWriteAuth(rawVaultKey)
+          ]);
         })
-        .then(function (key) {
-          vaultKey = key;
+        .then(function (r) {
+          vaultKey = r[0];
+          writeAuth = r[1];
           requestPersistence();
         });
     });
@@ -404,10 +433,14 @@ window.Vault = (function () {
       if (!record) throw new Error("vault not initialized");
       return unwrapVaultKey(record, password)
         .then(function (rawVaultKey) {
-          return importVaultKey(rawVaultKey);
+          return Promise.all([
+            importVaultKey(rawVaultKey),
+            deriveWriteAuth(rawVaultKey)
+          ]);
         })
-        .then(function (key) {
-          vaultKey = key;
+        .then(function (r) {
+          vaultKey = r[0];
+          writeAuth = r[1];
           requestPersistence();
           return true;
         })
@@ -420,6 +453,12 @@ window.Vault = (function () {
 
   function lock() {
     vaultKey = null;
+    writeAuth = null;
+  }
+
+  // "" while locked — sync.js skips pushing then (pushes rerun on unlock).
+  function getWriteAuth() {
+    return writeAuth || "";
   }
 
   // Re-wrap the same vault key under a new password. Verifies the old
@@ -1200,6 +1239,7 @@ window.Vault = (function () {
     create: create,
     unlock: unlock,
     lock: lock,
+    getWriteAuth: getWriteAuth,
     changePassword: changePassword,
     list: list,
     get: get,

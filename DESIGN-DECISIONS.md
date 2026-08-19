@@ -4,6 +4,40 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Per-vault write auth: derived, not minted (2026-08)
+
+The per-vault write credential (`X-Vault-Write`) is **derived from the vault
+key** — `SHA-256("ownvault-write-v1" || raw vault key)` — instead of being a
+separate random secret. Three designs were weighed:
+
+- **A minted secret stored in the encrypted `__vault__` settings entry** would
+  sync to other devices, but has a bootstrap race: two legacy devices
+  generating a key concurrently produce different values, the server's TOFU
+  claim takes one, and the loser needs a special "adopt the server's key"
+  path that fights the settings entry's last-writer-wins merge.
+- **A minted secret the user copies between devices** (like the Vault ID)
+  works but adds a second thing to transcribe, and a device that restores
+  from a backup wouldn't have it.
+- **Deriving from the vault key** has none of that: every device that can
+  unlock the vault computes the *same* value (no races, no copying, backups
+  included), it survives a master-password change (the vault key doesn't
+  change), and the one operation that does replace the vault key — full
+  re-encrypt — is exactly where rotation belongs, done via
+  `X-Vault-Write-New` on the meta PUT that installs the new wrapped key.
+
+The derivation is one-way (SHA-256), so the credential reveals nothing about
+the key; the server stores only a hash of it, so a leaked server DB hands out
+no write credentials. It is computed in `create`/`unlock`, the only moments
+the raw key bytes exist (the live CryptoKey is non-extractable), held in
+memory, and cleared on lock — sync skips the push half while locked and
+retries after the next unlock.
+
+TOFU caveat, accepted and documented: an attacker holding the server token
+and a vault id could claim a vault that has *never been written*. Real vaults
+are claimed by their own first sync, and vault ids are unguessable 128-bit
+values, so the window is the moments between minting an id and the first
+push.
+
 ## Credential storage and guess-rate limiting (2026-08)
 
 ### The sync token lives in `localStorage`, deliberately
