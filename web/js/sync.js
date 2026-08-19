@@ -142,9 +142,11 @@ window.Sync = (function () {
     var v = getVaultId();
     if (v) h["X-Vault-Id"] = v;
     // Per-vault write credential, derived from the vault key on unlock
-    // (vault.js). The server requires it on writes; harmless on reads.
+    // (vault.js). The server requires it on writes; harmless on reads. A
+    // caller-set value wins: the rotating meta push must present the OLD
+    // credential here (with the new one in X-Vault-Write-New).
     var wa = window.Vault && Vault.getWriteAuth ? Vault.getWriteAuth() : "";
-    if (wa) h["X-Vault-Write"] = wa;
+    if (wa && !h["X-Vault-Write"]) h["X-Vault-Write"] = wa;
     return h;
   }
 
@@ -194,10 +196,20 @@ window.Sync = (function () {
     return Vault.pendingMeta()
       .then(function (metaDoc) {
         if (!metaDoc) return;
-        return api("/api/meta", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ doc: metaDoc })
+        return Vault.getPendingRotation().then(function (rot) {
+          var h = { "Content-Type": "application/json" };
+          if (rot) {
+            // Full re-encrypt replaced the vault key: prove the old
+            // credential and hand the server the new one in the same write
+            // that installs the new wrapped-key record.
+            h["X-Vault-Write"] = rot;
+            h["X-Vault-Write-New"] = Vault.getWriteAuth();
+          }
+          return api("/api/meta", {
+            method: "PUT",
+            headers: h,
+            body: JSON.stringify({ doc: metaDoc })
+          });
         })
           .then(function (res) {
             if (res.status === 401) throw { auth: true };

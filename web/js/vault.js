@@ -303,12 +303,14 @@ window.Vault = (function () {
     );
   }
 
-  function encryptForEntry(id, plaintextBytes) {
+  // key is explicit so full re-encrypt can produce ciphertexts under the NEW
+  // vault key while the live key is still the old one.
+  function encryptForEntryWith(key, id, plaintextBytes) {
     var iv = randomBytes(12);
     return subtle
       .encrypt(
         { name: "AES-GCM", iv: iv, additionalData: utf8Encode(id) },
-        vaultKey,
+        key,
         plaintextBytes
       )
       .then(function (ct) {
@@ -318,6 +320,10 @@ window.Vault = (function () {
         out.set(body, CT_MAGIC.length);
         return { iv: iv, ciphertext: out };
       });
+  }
+
+  function encryptForEntry(id, plaintextBytes) {
+    return encryptForEntryWith(vaultKey, id, plaintextBytes);
   }
 
   // Decrypt an entry ciphertext: id-bound (v2) when the magic prefix is
@@ -506,6 +512,18 @@ window.Vault = (function () {
     });
   }
 
+  // How many envelopes SHOULD decrypt (live, payload-bearing, not settings).
+  // Compared against list()'s output by the UI: rows suddenly all failing to
+  // decrypt while envelopes exist means the vault key changed under us (a
+  // full re-encrypt on another device) and this session must re-unlock.
+  function liveEnvelopeCount() {
+    return entriesGetAll().then(function (envs) {
+      return envs.filter(function (e) {
+        return !e.deleted && e.id !== SETTINGS_ID && e.ciphertext;
+      }).length;
+    });
+  }
+
   function get(id) {
     requireUnlocked();
     return entryGetRaw(id).then(function (env) {
@@ -583,6 +601,126 @@ window.Vault = (function () {
       }).then(function () {
         notifyChanged(true);
       });
+    });
+  }
+
+  /* ==================== full re-encrypt ==================== */
+  // Compromise recovery. Changing the master password only re-wraps the vault
+  // key — anyone who copied the vault AND knew the old password already has
+  // that key forever. This replaces the key itself: a fresh vault key, every
+  // entry re-encrypted under it, wrapped under a NEW master password (keeping
+  // the compromised one would be defeated by the next stolen backup).
+  //
+  // Interruption safety comes from atomicity, not migration markers: all the
+  // new ciphertexts are computed in memory first, then the new wrapped-key
+  // record and every envelope are committed in ONE IndexedDB transaction. A
+  // crash anywhere leaves the vault entirely on the old key.
+  //
+  // Server rotation: the new meta record carries the OLD write credential in
+  // its `rotate` field (a credential, not a key — and the old key is presumed
+  // compromised anyway, which is why this flow is running). The next meta
+  // push presents it as X-Vault-Write with the new credential as
+  // X-Vault-Write-New, so the server's TOFU claim moves to the new key in the
+  // same write that installs the new wrapped-key record. The field survives a
+  // crash between local commit and sync because it rides the dirty meta.
+  //
+  // Side benefit: every entry comes out id-bound (v2 AAD format), sweeping
+  // away any remaining legacy unbound ciphertexts.
+  //
+  // Resolves to the number of re-encrypted entries; false if currentPassword
+  // is wrong. Callers must ensure no unresolved conflicts exist (the stashed
+  // server versions are old-key ciphertext and would become undecryptable).
+  function reencrypt(currentPassword, newPassword) {
+    requireUnlocked();
+    return metaGet().then(function (record) {
+      if (!record) throw new Error("vault not initialized");
+      return unwrapVaultKey(record, currentPassword).then(
+        function () {
+          return doReencrypt(record, newPassword);
+        },
+        function () {
+          return false; // current password wrong
+        }
+      );
+    });
+  }
+
+  function doReencrypt(oldRecord, newPassword) {
+    var newRaw = randomBytes(32);
+    var oldWriteAuth = writeAuth;
+    return Promise.all([
+      importVaultKey(newRaw),
+      deriveWriteAuth(newRaw),
+      wrapVaultKey(newRaw, newPassword),
+      entriesGetAll()
+    ]).then(function (r) {
+      var newKey = r[0];
+      var newWA = r[1];
+      var newRecord = r[2];
+      var envs = r[3] || [];
+      newRecord.rev = oldRecord.rev || 0;
+      newRecord.dirty = true;
+      newRecord.rotate = oldWriteAuth || null;
+      var now = Date.now();
+      // Decrypt with the live (old) key, re-encrypt under the new one.
+      // Tombstones carry no payload and stay untouched.
+      return Promise.all(
+        envs.map(function (env) {
+          if (env.deleted || !env.ciphertext) return env;
+          return decryptForEntry(env.id, env.iv, env.ciphertext).then(function (pt) {
+            return encryptForEntryWith(newKey, env.id, pt).then(function (enc) {
+              return {
+                id: env.id,
+                iv: enc.iv,
+                ciphertext: enc.ciphertext,
+                updatedAt: now,
+                deleted: false,
+                rev: env.rev || 0, // still the sync base for the push
+                dirty: true,
+                conflict: false,
+                remote: null
+              };
+            });
+          });
+        })
+      ).then(function (newEnvs) {
+        return openDB().then(function (d) {
+          return new Promise(function (resolve, reject) {
+            var t = d.transaction([STORE_META, STORE_ENTRIES], "readwrite");
+            t.objectStore(STORE_META).put(newRecord, META_KEY);
+            var es = t.objectStore(STORE_ENTRIES);
+            newEnvs.forEach(function (env) {
+              es.put(env);
+            });
+            t.oncomplete = function () {
+              // Only now does the device switch keys — the transaction either
+              // committed everything or nothing.
+              vaultKey = newKey;
+              writeAuth = newWA;
+              notifyChanged(true);
+              resolve(
+                newEnvs.filter(function (e) {
+                  return !e.deleted && e.id !== SETTINGS_ID;
+                }).length
+              );
+            };
+            t.onerror = function () {
+              reject(t.error);
+            };
+            t.onabort = function () {
+              reject(t.error);
+            };
+          });
+        });
+      });
+    });
+  }
+
+  // The old write credential to present alongside a rotating meta push, "" if
+  // no rotation is pending.
+  function getPendingRotation() {
+    return metaGet().then(function (r) {
+      return (r && r.dirty && r.rotate) || "";
     });
   }
 
@@ -1158,6 +1296,7 @@ window.Vault = (function () {
       if (!r) return;
       r.rev = rev;
       r.dirty = false;
+      r.rotate = null; // rotation (if any) is done once the meta landed
       return metaPut(r);
     });
   }
@@ -1241,7 +1380,10 @@ window.Vault = (function () {
     lock: lock,
     getWriteAuth: getWriteAuth,
     changePassword: changePassword,
+    reencrypt: reencrypt,
+    getPendingRotation: getPendingRotation,
     list: list,
+    liveEnvelopeCount: liveEnvelopeCount,
     get: get,
     put: put,
     putMany: putMany,

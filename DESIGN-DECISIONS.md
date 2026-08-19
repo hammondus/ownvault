@@ -4,6 +4,42 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Full re-encrypt: atomicity instead of migration markers (2026-08)
+
+CLAUDE.md originally sketched interruption safety for full re-encrypt as
+"keep both wrapped keys until every entry carries the new key's generation
+marker". The implementation does something simpler and strictly safer
+locally: compute every new ciphertext in memory first, then commit the new
+wrapped-key record and all envelopes in **one IndexedDB transaction**. There
+is no observable half-migrated state — a crash at any point leaves the vault
+entirely on the old key, and no marker bookkeeping can drift.
+
+Why this works here and not in general: vault entries are small (a few KB
+each) and vaults are thousands of entries at most, so "the whole vault in
+memory twice" is megabytes. The marker design earns its complexity only when
+the data can't fit in memory or the store lacks multi-key atomic commits;
+IndexedDB has them. WebCrypto calls can't run inside an IDB transaction
+(any await ends it), which forces the encrypt-first-then-commit shape anyway.
+
+Two deliberate policies around it:
+
+- **A new master password is required**, not optional. The threat this flow
+  answers is "attacker has a copy of the vault AND the old password"; a
+  re-encrypt that kept the compromised password would be undone by the next
+  stolen backup.
+- **Unresolved sync conflicts block it.** A conflict's stashed server version
+  is old-key ciphertext; re-encrypting around it would leave the "keep
+  server" resolution path undecryptable.
+
+Cross-device: the re-encrypted envelopes are ordinary dirty edits (their
+`rev` stays the sync base), so they push through normal OCC. Other devices
+pull them, fail to decrypt with the in-memory old key, and vaultui locks with
+an explanation once a session that HAS decrypted rows sees zero decryptable
+rows while envelopes exist (`hadEntries` guard, so a fresh session full of
+foreign data never lock-loops). The server's write-auth claim rotates in the
+same meta PUT that installs the new wrapped key (`rotate` field on the dirty
+meta record survives a crash between local commit and sync).
+
 ## Per-vault write auth: derived, not minted (2026-08)
 
 The per-vault write credential (`X-Vault-Write`) is **derived from the vault

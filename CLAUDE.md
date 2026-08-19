@@ -32,11 +32,19 @@ pattern):
   vault half-migrated across two keys.
 - Caveat: re-wrapping protects against future guessing of the old password,
   but anyone who already copied the vault *and* knew the old password has the
-  vault key forever. So alongside "change password", offer an explicit "full
-  re-encrypt" (new vault key, every entry re-encrypted) for suspected
-  compromise — that rare path is the only one that needs interruption-safe
-  migration handling (e.g. keep both wrapped keys until every entry carries
-  the new key's generation marker).
+  vault key forever. So alongside "change password", Settings offers **Full
+  re-encrypt** (`vault.js` `reencrypt`) for suspected compromise: fresh vault
+  key, every entry re-encrypted under it, wrapped under a *new* master
+  password (keeping the compromised one would be defeated by the next stolen
+  backup). Interruption safety comes from atomicity, not migration markers:
+  all new ciphertexts are computed in memory, then the new wrapped-key record
+  and every envelope commit in ONE IndexedDB transaction — a crash leaves the
+  vault entirely on the old key. The server's write-auth claim rotates via
+  `X-Vault-Write-New` on the meta push (the old credential rides the dirty
+  meta record's `rotate` field so a crash between local commit and sync still
+  rotates later). Other devices auto-lock when pulled envelopes stop
+  decrypting (vaultui `loadEntries`) and re-unlock with the new password.
+  Re-encrypt also rebinds any remaining legacy (pre-AAD) ciphertexts.
 
 Hardening rules layered on that design (all in `vault.js` — keep them intact):
 

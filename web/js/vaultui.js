@@ -185,8 +185,11 @@
     renderStrength(byId("create-strength"), e.target.value);
   });
   document.body.addEventListener("input", function (e) {
-    if (e.target.name === "new" && e.target.closest("#change-pw-form")) {
+    if (e.target.name !== "new") return;
+    if (e.target.closest("#change-pw-form")) {
       renderStrength(byId("change-strength"), e.target.value);
+    } else if (e.target.closest("#reencrypt-form")) {
+      renderStrength(byId("reenc-strength"), e.target.value);
     }
   });
 
@@ -520,9 +523,35 @@
 
   /* ==================== list + search ==================== */
 
+  var hadEntries = false; // decrypted at least one row this session
+
   function loadEntries() {
     if (!Vault.isUnlocked()) return;
     Vault.list().then(function (rows) {
+      // Rows all failing to decrypt while envelopes exist — after they
+      // decrypted fine earlier this session — means the vault key changed
+      // under us (a full re-encrypt on another device). Lock so the user
+      // re-unlocks with the new master password, instead of silently showing
+      // an empty vault. The hadEntries guard stops a fresh session that never
+      // decrypted anything (e.g. foreign data) from lock-looping.
+      if (!rows.length && hadEntries) {
+        return Vault.liveEnvelopeCount().then(function (n) {
+          if (n > 0 && Vault.isUnlocked()) {
+            hadEntries = false;
+            lockNow();
+            var err = byId("unlock-error");
+            if (err) {
+              err.textContent =
+                "The vault was re-encrypted (likely on another device). Unlock with the new master password.";
+              show(err, true);
+            }
+            return;
+          }
+          entries = [];
+          renderList();
+        });
+      }
+      if (rows.length) hadEntries = true;
       entries = rows.sort(function (a, b) {
         return (a.title || "").localeCompare(b.title || "");
       });
@@ -1402,6 +1431,76 @@
       } else {
         settingsMsg("change-pw-msg", "Current password is incorrect.", true);
       }
+    });
+  });
+
+  // Full re-encrypt (compromise recovery): fresh vault key + new master
+  // password, every entry re-encrypted. Guarded by a danger confirm; refuses
+  // while conflicts are unresolved (their stashed server versions are old-key
+  // ciphertext and would become undecryptable mid-resolution).
+  document.body.addEventListener("submit", function (e) {
+    if (e.target.id !== "reencrypt-form") return;
+    e.preventDefault();
+    var f = e.target;
+    if (f["new"].value.length < 12) {
+      settingsMsg(
+        "reencrypt-msg",
+        "New password must be at least 12 characters — a few random words make a strong passphrase.",
+        true
+      );
+      return;
+    }
+    if (f["new"].value !== f.new2.value) {
+      settingsMsg("reencrypt-msg", "New passwords don't match.", true);
+      return;
+    }
+    Vault.conflictCount().then(function (n) {
+      if (n > 0) {
+        settingsMsg(
+          "reencrypt-msg",
+          "Resolve the pending sync " + (n > 1 ? "conflicts" : "conflict") + " first, then re-encrypt.",
+          true
+        );
+        return;
+      }
+      confirmDialog({
+        title: "Re-encrypt the whole vault?",
+        message:
+          "Every entry will be re-encrypted with a fresh vault key, locked by " +
+          "your new master password.\n\n" +
+          "• Your other devices will need the new master password.\n" +
+          "• Old backup files still open with the OLD password — export a new " +
+          "backup afterwards and destroy the old ones.",
+        confirmText: "Re-encrypt",
+        danger: true
+      }).then(function (ok) {
+        if (!ok) return;
+        settingsMsg("reencrypt-msg", "Re-encrypting…", false);
+        Vault.reencrypt(f.old.value, f["new"].value).then(
+          function (count) {
+            if (count === false) {
+              settingsMsg("reencrypt-msg", "Current password is incorrect.", true);
+              return;
+            }
+            f.reset();
+            show(byId("reenc-strength"), false);
+            settingsMsg(
+              "reencrypt-msg",
+              "Done — " + count + (count === 1 ? " entry" : " entries") +
+                " re-encrypted with a fresh key. Export a new backup, and unlock " +
+                "other devices with the new password.",
+              false
+            );
+          },
+          function (err) {
+            settingsMsg(
+              "reencrypt-msg",
+              (err && err.message) || "Re-encrypt failed — the vault is unchanged.",
+              true
+            );
+          }
+        );
+      });
     });
   });
 

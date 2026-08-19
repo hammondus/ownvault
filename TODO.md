@@ -6,12 +6,14 @@
   more resistant to GPU cracking. WebCrypto has no native support, hence WASM.
   Needs a KDF field in the wrapped-key record (`v` is there for this) and a
   migrate-on-password-change path.
-- "Full re-encrypt" action for suspected compromise (new vault key, every entry
-  re-encrypted) — see CLAUDE.md caveat under the crypto design. Would also
-  rebind any remaining legacy (pre-AAD) ciphertexts in one sweep.
 
 ## Done
 
+- Full re-encrypt (Settings): fresh vault key + new master password, every
+  entry re-encrypted, committed in one atomic IndexedDB transaction (a crash
+  leaves the vault entirely on the old key). Rotates the server write-auth
+  claim; other devices auto-lock and re-unlock with the new password. Also
+  rebinds any legacy pre-AAD ciphertexts.
 - Per-vault write auth: a credential derived from the vault key
   (unlock = proof of write rights, nothing extra to copy between devices),
   claimed hash-stored on first write (TOFU) and required on every write after.

@@ -145,6 +145,30 @@
   </div>
 
   <div class="card">
+    <h2 class="card-title">Full re-encrypt</h2>
+    <p class="card-note">For suspected compromise. Changing the master password
+      only re-wraps the vault key — anyone who copied your vault <em>and</em>
+      knew the old password already has that key. This generates a fresh vault
+      key, re-encrypts every entry with it, and wraps it under a new master
+      password. Everything happens on this device; the server only ever sees
+      the new ciphertext.</p>
+    <p class="card-note card-warn">⚠️ Your other devices will need the new
+      master password, and any old backup files stay openable with the old one
+      — export a fresh backup afterwards and destroy the old ones.</p>
+    <form id="reencrypt-form" class="stack">
+      <input class="form-input" type="password" name="old" placeholder="Current password" autocomplete="current-password">
+      <input class="form-input" type="password" name="new" placeholder="New master password" autocomplete="new-password">
+      <div id="reenc-strength" class="pw-meter" hidden>
+        <div class="pw-meter-bar"><span></span></div>
+        <div class="pw-meter-text"></div>
+      </div>
+      <input class="form-input" type="password" name="new2" placeholder="Confirm new master password" autocomplete="new-password">
+      <p id="reencrypt-msg" class="form-msg" hidden></p>
+      <button class="btn btn-danger" type="submit">Re-encrypt vault…</button>
+    </form>
+  </div>
+
+  <div class="card">
     <h2 class="card-title">Appearance</h2>
     <label class="setting-row">
       <span>Colour scheme</span>
