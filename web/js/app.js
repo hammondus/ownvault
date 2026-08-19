@@ -3,7 +3,9 @@
 
   var STORAGE_KEY = "menuBtnPos";
   var SCHEME_KEY = "colorScheme";
+  var PIN_KEY = "menuPinned";
   var DRAG_THRESHOLD = 8; // px of movement before a press becomes a drag
+  var DOUBLE_TAP_MS = 350; // two taps within this = double-tap (pin toggle)
 
   /* ==================== Colour scheme ==================== */
   // Two schemes, chosen on the Settings screen and persisted. The colors
@@ -135,7 +137,9 @@
 
   function openNav() {
     nav.classList.add("open");
-    overlay.classList.add("visible");
+    // A pinned drawer coexists with the content (which moves aside), so no
+    // dimming overlay — that's what makes pinning useful on a large screen.
+    if (!isPinned()) overlay.classList.add("visible");
     btn.setAttribute("aria-expanded", "true");
     btn.setAttribute("aria-label", "Close menu");
   }
@@ -151,10 +155,48 @@
     isNavOpen() ? closeNav() : openNav();
   }
 
+  /* Pinning: double-tap the hamburger to keep the drawer open (persisted).
+     Only honoured on screens wide enough for the content to move aside
+     (min-width 900px, matching the CSS) — on a phone a pinned drawer would
+     sit over the content with nothing dimming it. */
+
+  var pinQuery = window.matchMedia("(min-width: 900px)");
+
+  function isPinned() {
+    return document.body.classList.contains("nav-pinned");
+  }
+
+  function setPinned(on) {
+    if (on && !pinQuery.matches) return; // too narrow — ignore the request
+    document.body.classList.toggle("nav-pinned", on);
+    try {
+      if (on) localStorage.setItem(PIN_KEY, "1");
+      else localStorage.removeItem(PIN_KEY);
+    } catch (e) { /* pin works, just won't persist */ }
+    if (on) {
+      openNav();
+      overlay.classList.remove("visible"); // in case it was already showing
+    } else {
+      closeNav();
+    }
+  }
+
+  // Restore the pin (silently ignored on narrow screens), and drop it if the
+  // window later shrinks below the threshold — otherwise the drawer would
+  // cover the content with no way to dismiss it by tapping outside.
+  try {
+    if (localStorage.getItem(PIN_KEY) === "1") setPinned(true);
+  } catch (e) { /* ignore */ }
+  var onPinQuery = function () {
+    if (!pinQuery.matches && isPinned()) setPinned(false);
+  };
+  if (pinQuery.addEventListener) pinQuery.addEventListener("change", onPinQuery);
+  else pinQuery.addListener(onPinQuery); // older Safari
+
   overlay.addEventListener("click", closeNav);
 
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && isNavOpen()) closeNav();
+    if (e.key === "Escape" && isNavOpen() && !isPinned()) closeNav();
   });
 
   /* ==================== Routing glue around htmx ==================== */
@@ -177,9 +219,11 @@
   }
 
   // The drawer slides closed while the new content swaps in underneath —
-  // no page reload, so the animation plays fully.
+  // no page reload, so the animation plays fully. A pinned drawer stays put.
   navLinks.forEach(function (a) {
-    a.addEventListener("click", closeNav);
+    a.addEventListener("click", function () {
+      if (!isPinned()) closeNav();
+    });
   });
 
   document.body.addEventListener("htmx:pushedIntoHistory", syncUI);
@@ -272,6 +316,9 @@
     setPosition(e.clientX - drag.offsetX, e.clientY - drag.offsetY);
   });
 
+  var lastTapAt = 0;
+  var lastTapUnpinned = false;
+
   function endDrag(e) {
     if (!drag || e.pointerId !== drag.pointerId) return;
     var wasDrag = drag.moved;
@@ -279,8 +326,26 @@
     btn.classList.remove("dragging");
     if (wasDrag) {
       savePosition();
-    } else if (e.type === "pointerup") {
-      toggleNav(); // a press without movement is a tap
+      return;
+    }
+    if (e.type !== "pointerup") return;
+    // A press without movement is a tap. Double-tap pins the drawer open;
+    // while pinned, any tap releases it. The first tap of a double-tap has
+    // already acted by the time the second arrives, so the second must know
+    // what the first did: after open, it pins; after an unpin, it swallows
+    // (or the double-tap that released a pin would immediately re-pin).
+    var now = Date.now();
+    var isDoubleTap = now - lastTapAt < DOUBLE_TAP_MS;
+    lastTapAt = now;
+    if (isDoubleTap) {
+      if (!lastTapUnpinned) setPinned(true);
+      lastTapUnpinned = false;
+    } else if (isPinned()) {
+      setPinned(false);
+      lastTapUnpinned = true;
+    } else {
+      toggleNav();
+      lastTapUnpinned = false;
     }
   }
 

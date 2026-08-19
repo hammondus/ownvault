@@ -1,8 +1,6 @@
 # TODO
 
 - CSV import
-- fix the stupid default position of hamburger menu
-- have the option of double clicking the hamburber button to keep the menu open. Useful when on a larger screen.
 
 ## Security (future hardening)
 
@@ -20,6 +18,11 @@
 
 ## Done
 
+- Hamburger button defaults to bottom-right (floating-action-button spot)
+  instead of top-left, where it covered the search field; dragging still
+  overrides it.
+- Double-tap the hamburger to pin the drawer open (900px+ screens; content
+  moves aside). Single tap releases. Persisted across reloads.
 - Rate-limit failed `/api/*` token auth: per-IP failure counter in front of
   `auth()` (429 after 10 failures per 15 min, refused before the compare so a
   blocked guess learns nothing), plus a 16-character minimum on `-token` at
