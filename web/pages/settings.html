@@ -110,6 +110,22 @@
   </div>
 
   <div class="card">
+    <h2 class="card-title">Import from CSV</h2>
+    <p class="card-note">Bring passwords across from another password manager or
+      browser (Chrome, Edge, Firefox, Safari, Bitwarden, 1Password, LastPass,
+      KeePass) using its CSV export. Imported entries are added to this vault;
+      nothing existing is changed.</p>
+    <p class="card-note card-warn">⚠️ A CSV export holds your passwords in plain
+      text. Delete the file — and empty the bin — as soon as the import is
+      done.</p>
+    <label class="btn btn-ghost import-label">
+      Import CSV…
+      <input id="csv-file" type="file" accept=".csv,text/csv" hidden>
+    </label>
+    <p id="csv-msg" class="form-msg" hidden></p>
+  </div>
+
+  <div class="card">
     <h2 class="card-title">Emergency recovery sheet</h2>
     <p class="card-note">Print your <strong>critical</strong> entries — the rarely
       changing, must-not-lose ones like crypto seed phrases, master passwords, and

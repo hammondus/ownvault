@@ -475,6 +475,12 @@ window.Vault = (function () {
     });
   }
 
+  function newId() {
+    return window.crypto.randomUUID
+      ? window.crypto.randomUUID()
+      : b64encode(randomBytes(16));
+  }
+
   // Create (no id) or update (id present). Stamps created/modified inside the
   // encrypted payload and updatedAt on the envelope (server-visible for sync).
   // Marks the entry dirty and keeps its existing rev as the sync base.
@@ -482,9 +488,7 @@ window.Vault = (function () {
     requireUnlocked();
     var now = Date.now();
     var isNew = !fields.id;
-    var id = fields.id || (window.crypto.randomUUID
-      ? window.crypto.randomUUID()
-      : b64encode(randomBytes(16)));
+    var id = fields.id || newId();
     var payload = {
       title: fields.title || "",
       username: fields.username || "",
@@ -539,6 +543,219 @@ window.Vault = (function () {
         remote: null
       }).then(function () {
         notifyChanged(true);
+      });
+    });
+  }
+
+  /* ==================== CSV import ==================== */
+  // Import from another password manager's CSV export. Parsing and mapping
+  // live here (DOM-free, reusable by a future extension); the UI reads the
+  // file, shows the parsed count for confirmation, then calls putMany.
+
+  // Minimal RFC 4180 parser: quoted fields may hold the delimiter, doubled
+  // quotes, and newlines. Accepts \n or \r\n row ends and a UTF-8 BOM.
+  function parseCSVRows(text, delim) {
+    var rows = [];
+    var row = [];
+    var field = "";
+    var inQ = false;
+    var i = 0;
+    var c;
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    while (i < text.length) {
+      c = text[i];
+      if (inQ) {
+        if (c === '"') {
+          if (text[i + 1] === '"') {
+            field += '"';
+            i += 2;
+            continue;
+          }
+          inQ = false;
+          i++;
+          continue;
+        }
+        field += c;
+        i++;
+        continue;
+      }
+      if (c === '"' && field === "") {
+        inQ = true;
+        i++;
+        continue;
+      }
+      if (c === delim) {
+        row.push(field);
+        field = "";
+        i++;
+        continue;
+      }
+      if (c === "\n" || c === "\r") {
+        if (c === "\r" && text[i + 1] === "\n") i++;
+        row.push(field);
+        field = "";
+        rows.push(row);
+        row = [];
+        i++;
+        continue;
+      }
+      field += c;
+      i++;
+    }
+    if (field !== "" || row.length) {
+      row.push(field);
+      rows.push(row);
+    }
+    return rows.filter(function (r) {
+      return r.some(function (f) {
+        return f !== "";
+      });
+    });
+  }
+
+  // Header names seen in the wild, matched after normalising (lowercase,
+  // alphanumerics only — so "Login Name", "login_name" and "loginName" all
+  // read as "loginname"). First candidate present wins. Covers Chrome/Edge
+  // (name,url,username,password,note), Firefox (url,username,password — no
+  // title, derived from the url), Safari/Apple Passwords (Title,URL,Username,
+  // Password,Notes,OTPAuth), Bitwarden (name,notes,login_uri,login_username,
+  // login_password,login_totp), LastPass (url,username,password,extra,name),
+  // 1Password (Title,Url,Username,Password,Notes) and KeePass/KeePassXC
+  // (Account/Title, Login Name/Username, Password, Web Site/URL, Comments).
+  var CSV_HEADERS = {
+    title: ["title", "name", "account"],
+    username: ["username", "loginname", "loginusername", "user"],
+    password: ["password", "loginpassword"],
+    url: ["url", "loginuri", "website", "site", "webaddress"],
+    notes: ["notes", "note", "extra", "comments", "comment"],
+    totp: ["totp", "logintotp", "otpauth", "otp"]
+  };
+
+  function normHeader(h) {
+    return String(h || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function hostFromUrl(u) {
+    var m = /^(?:[a-z][a-z0-9+.-]*:\/\/)?([^\/:?#]+)/i.exec(u || "");
+    return m ? m[1] : "";
+  }
+
+  // Parse a CSV export into entry field objects WITHOUT writing anything, so
+  // the UI can show the count before the user commits. Throws on anything
+  // that doesn't look like a password export. Returns {entries, skipped}.
+  function parseCSV(text) {
+    // Some exports (older KeePass, spreadsheet re-saves in EU locales) are
+    // semicolon-separated; decide from the header line.
+    var nl = text.indexOf("\n");
+    var head = nl === -1 ? text : text.slice(0, nl);
+    var delim = head.indexOf(",") === -1 && head.indexOf(";") !== -1 ? ";" : ",";
+    var rows = parseCSVRows(text, delim);
+    if (rows.length < 2) {
+      throw new Error("No entries found — the file has a header row but no data.");
+    }
+    var header = rows[0].map(normHeader);
+    var col = {};
+    Object.keys(CSV_HEADERS).forEach(function (target) {
+      var cands = CSV_HEADERS[target];
+      for (var i = 0; i < cands.length; i++) {
+        var at = header.indexOf(cands[i]);
+        if (at !== -1) {
+          col[target] = at;
+          return;
+        }
+      }
+    });
+    // Every real password export has a password column; without one this is
+    // some other CSV and silently importing it would only make a mess.
+    if (col.password === undefined) {
+      throw new Error(
+        "Couldn't recognise this as a password export — no password column in the header."
+      );
+    }
+    var entries = [];
+    var skipped = 0;
+    rows.slice(1).forEach(function (r) {
+      function v(k) {
+        return col[k] === undefined ? "" : String(r[col[k]] || "").trim();
+      }
+      var notes = v("notes");
+      var totp = v("totp");
+      // No TOTP field in the payload (yet) — keep the secret in notes rather
+      // than silently dropping it.
+      if (totp) notes = (notes ? notes + "\n" : "") + "TOTP: " + totp;
+      var e = {
+        title: v("title"),
+        username: v("username"),
+        password: v("password"),
+        url: v("url"),
+        notes: notes
+      };
+      if (!e.title && !e.username && !e.password && !e.notes) {
+        skipped++;
+        return;
+      }
+      if (!e.title) e.title = hostFromUrl(e.url) || e.username || "(imported)";
+      entries.push(e);
+    });
+    if (!entries.length) {
+      throw new Error("No entries found in that file.");
+    }
+    return { entries: entries, skipped: skipped };
+  }
+
+  // Bulk add: encrypt every entry first, then write them in ONE IndexedDB
+  // transaction with a single change notification — importing a few hundred
+  // rows must not fire a few hundred list refreshes and sync schedules.
+  // Always creates new entries (fresh ids); nothing is overwritten.
+  function putMany(list) {
+    requireUnlocked();
+    var now = Date.now();
+    return Promise.all(
+      (list || []).map(function (fields) {
+        var id = newId();
+        var payload = {
+          title: fields.title || "",
+          username: fields.username || "",
+          password: fields.password || "",
+          url: fields.url || "",
+          notes: fields.notes || "",
+          critical: !!fields.critical,
+          created: now,
+          modified: now
+        };
+        return encryptPayload(id, payload).then(function (enc) {
+          return {
+            id: id,
+            iv: enc.iv,
+            ciphertext: enc.ciphertext,
+            updatedAt: now,
+            deleted: false,
+            rev: 0,
+            dirty: true,
+            conflict: false,
+            remote: null
+          };
+        });
+      })
+    ).then(function (envs) {
+      return openDB().then(function (d) {
+        return new Promise(function (resolve, reject) {
+          var t = d.transaction(STORE_ENTRIES, "readwrite");
+          var s = t.objectStore(STORE_ENTRIES);
+          envs.forEach(function (env) {
+            s.put(env);
+          });
+          t.oncomplete = function () {
+            notifyChanged(true);
+            resolve(envs.length);
+          };
+          t.onerror = function () {
+            reject(t.error);
+          };
+          t.onabort = function () {
+            reject(t.error);
+          };
+        });
       });
     });
   }
@@ -987,6 +1204,8 @@ window.Vault = (function () {
     list: list,
     get: get,
     put: put,
+    putMany: putMany,
+    parseCSV: parseCSV,
     remove: remove,
     getName: getName,
     setName: setName,

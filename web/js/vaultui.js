@@ -1253,6 +1253,10 @@
       }
       return;
     }
+    if (e.target.id === "csv-file") {
+      handleCsvFile(e);
+      return;
+    }
     if (e.target.id !== "import-file") return;
     var input = e.target;
     var file = input.files && input.files[0];
@@ -1292,6 +1296,53 @@
       reader.readAsText(file);
     });
   });
+
+  // CSV import (Settings): parse first — no writes — so the confirm dialog can
+  // say exactly how many entries the file holds before anything is committed.
+  // Vault.parseCSV throws on files that don't look like a password export.
+  function handleCsvFile(e) {
+    var input = e.target;
+    var file = input.files && input.files[0];
+    input.value = ""; // reset so re-selecting the same file re-fires change
+    if (!file) return;
+    if (!Vault.isUnlocked()) {
+      settingsMsg("csv-msg", "Unlock the vault first.", true);
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed;
+      try {
+        parsed = Vault.parseCSV(String(reader.result));
+      } catch (err) {
+        settingsMsg("csv-msg", (err && err.message) || "Couldn't read that CSV.", true);
+        return;
+      }
+      var n = parsed.entries.length;
+      var msg =
+        n + (n > 1 ? " entries" : " entry") + " found in " + file.name +
+        (parsed.skipped ? " (" + parsed.skipped + " empty rows skipped)" : "") +
+        ". They'll be added to your vault — nothing existing is changed." +
+        "\n\nThe CSV file itself is unencrypted: delete it, and empty the bin, " +
+        "once the import is done.";
+      confirmDialog({
+        title: "Import " + n + (n > 1 ? " entries?" : " entry?"),
+        message: msg,
+        confirmText: "Import"
+      }).then(function (ok) {
+        if (!ok) return;
+        Vault.putMany(parsed.entries).then(
+          function (added) {
+            settingsMsg("csv-msg", "Imported " + added + (added > 1 ? " entries." : " entry."), false);
+          },
+          function () {
+            settingsMsg("csv-msg", "Import failed — nothing was added.", true);
+          }
+        );
+      });
+    };
+    reader.readAsText(file);
+  }
 
   document.body.addEventListener("submit", function (e) {
     if (e.target.id !== "change-pw-form") return;

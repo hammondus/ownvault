@@ -1,7 +1,5 @@
 # TODO
 
-- CSV import
-
 ## Security (future hardening)
 
 - Argon2id key derivation (via a small WASM module) in place of PBKDF2 — far
@@ -18,6 +16,10 @@
 
 ## Done
 
+- CSV import (Settings): header-mapped support for Chrome/Edge, Firefox,
+  Safari/Apple Passwords, Bitwarden, LastPass, 1Password, and KeePass exports.
+  Parse-then-confirm (count shown before anything is written), bulk insert in
+  one transaction, TOTP columns preserved in notes.
 - Hamburger button defaults to bottom-right (floating-action-button spot)
   instead of top-left, where it covered the search field; dragging still
   overrides it.
