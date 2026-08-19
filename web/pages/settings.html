@@ -20,6 +20,10 @@
       <h3 class="card-subtitle">Change master password</h3>
       <input class="form-input" type="password" name="old" placeholder="Current password" autocomplete="current-password">
       <input class="form-input" type="password" name="new" placeholder="New password" autocomplete="new-password">
+      <div id="change-strength" class="pw-meter" hidden>
+        <div class="pw-meter-bar"><span></span></div>
+        <div class="pw-meter-text"></div>
+      </div>
       <input class="form-input" type="password" name="new2" placeholder="Confirm new password" autocomplete="new-password">
       <p id="change-pw-msg" class="form-msg" hidden></p>
       <button class="btn" type="submit">Change password</button>

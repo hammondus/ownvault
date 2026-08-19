@@ -73,6 +73,10 @@
                autocapitalize="words" maxlength="30" aria-label="Vault name">
         <input id="create-pw" class="lock-input" type="password"
                placeholder="Master password" autocomplete="new-password">
+        <div id="create-strength" class="pw-meter" hidden>
+          <div class="pw-meter-bar"><span></span></div>
+          <div class="pw-meter-text"></div>
+        </div>
         <input id="create-pw2" class="lock-input" type="password"
                placeholder="Confirm master password" autocomplete="new-password">
         <p id="create-error" class="lock-error" hidden></p>
@@ -195,6 +199,7 @@
   <div id="print-sheet" class="print-sheet" aria-hidden="true"></div>
 
   <script src="/js/htmx.min.js"></script>
+  <script src="/js/pwstrength.js"></script>
   <script src="/js/vault.js"></script>
   <script src="/js/sync.js"></script>
   <script src="/js/app.js"></script>

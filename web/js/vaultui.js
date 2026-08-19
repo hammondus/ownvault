@@ -157,6 +157,39 @@
     "(on a phone over your LAN, use the server's HTTPS URL — see the README's " +
     "mkcert / iPhone setup).";
 
+  /* ==================== password strength meter ==================== */
+  // Advisory only — the 12-character floor stays the single hard rule.
+  // pwstrength.js scores; this renders into a .pw-meter block (bar + text).
+
+  function renderStrength(container, pw) {
+    if (!container || !window.PwStrength) return;
+    if (!pw) {
+      container.hidden = true;
+      return;
+    }
+    var r = PwStrength.score(pw);
+    container.hidden = false;
+    container.className = "pw-meter s" + r.score;
+    var text = container.querySelector(".pw-meter-text");
+    if (text) {
+      var label = r.label.charAt(0).toUpperCase() + r.label.slice(1);
+      text.textContent =
+        label + " — could be cracked offline " + r.crackTime + "." +
+        (r.feedback ? " " + r.feedback : "");
+    }
+  }
+
+  // The create field is persistent chrome; the change-password field lives in
+  // the swapped-in Settings fragment, so it's delegated.
+  byId("create-pw").addEventListener("input", function (e) {
+    renderStrength(byId("create-strength"), e.target.value);
+  });
+  document.body.addEventListener("input", function (e) {
+    if (e.target.name === "new" && e.target.closest("#change-pw-form")) {
+      renderStrength(byId("change-strength"), e.target.value);
+    }
+  });
+
   /* ==================== lock gate ==================== */
 
   function showLock(mode) {
@@ -193,6 +226,7 @@
       var f = byId(id);
       if (f) f.value = "";
     });
+    show(byId("create-strength"), false); // fields were just cleared
     var focusId =
       mode === "create" ? "create-pw"
         : mode === "connect" ? "connect-id"
@@ -1363,6 +1397,7 @@
     Vault.changePassword(f.old.value, f["new"].value).then(function (ok) {
       if (ok) {
         f.reset();
+        show(byId("change-strength"), false); // fields were just cleared
         settingsMsg("change-pw-msg", "Master password changed.", false);
       } else {
         settingsMsg("change-pw-msg", "Current password is incorrect.", true);

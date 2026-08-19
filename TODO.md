@@ -8,14 +8,17 @@
   migrate-on-password-change path.
 - Per-vault write tokens, so co-tenants on a shared server can't overwrite each
   other's ciphertext (today the single server token gates all writes).
-- Password strength meter (zxcvbn-style) on the create/change screens, beyond
-  the current 12-character floor.
 - "Full re-encrypt" action for suspected compromise (new vault key, every entry
   re-encrypted) — see CLAUDE.md caveat under the crypto design. Would also
   rebind any remaining legacy (pre-AAD) ciphertexts in one sweep.
 
 ## Done
 
+- Password strength meter on the create and change-password forms
+  (pwstrength.js, ~150 lines, no dependency): pool entropy discounted for
+  repeats/sequences/keyboard runs, a l33t-normalised common-password list, and
+  crack time framed at offline PBKDF2 rates. Advisory only — the 12-character
+  floor stays the hard rule.
 - CSV import (Settings): header-mapped support for Chrome/Edge, Firefox,
   Safari/Apple Passwords, Bitwarden, LastPass, 1Password, and KeePass exports.
   Parse-then-confirm (count shown before anything is written), bulk insert in

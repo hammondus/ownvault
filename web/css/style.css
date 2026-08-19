@@ -1008,3 +1008,41 @@ textarea.form-input {
     word-break: break-all;
   }
 }
+
+/* ---------- Password strength meter ---------- */
+
+/* Advisory meter under the create / change-password fields (pwstrength.js
+   scores, vaultui.js renders). The 12-character minimum stays the only hard
+   rule. Fixed traffic-light colours read correctly on both the dark lock
+   card and the light settings card. */
+.pw-meter {
+  margin: 2px 0 10px;
+  text-align: left;
+}
+
+.pw-meter-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(128, 128, 128, 0.25);
+  overflow: hidden;
+}
+
+.pw-meter-bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  transition: width 0.2s ease, background-color 0.2s ease;
+}
+
+.pw-meter.s0 .pw-meter-bar span { width: 10%;  background: #dc2626; }
+.pw-meter.s1 .pw-meter-bar span { width: 30%;  background: #ea580c; }
+.pw-meter.s2 .pw-meter-bar span { width: 55%;  background: #d97706; }
+.pw-meter.s3 .pw-meter-bar span { width: 80%;  background: #65a30d; }
+.pw-meter.s4 .pw-meter-bar span { width: 100%; background: #16a34a; }
+
+.pw-meter-text {
+  font-size: 0.75rem;
+  opacity: 0.85;
+  margin-top: 4px;
+}
