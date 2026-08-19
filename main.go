@@ -52,6 +52,23 @@ const (
 // tokenless — see the /events handler).
 const maxSSEClients = 256
 
+// Token auth rate limiting: after authFailLimit failed token attempts from
+// one IP within authFailWindow, further attempts from that IP get 429 until
+// the window rolls over — and crucially, without running the compare, so an
+// over-limit guess learns nothing. This turns "unlimited online guessing"
+// into ~1k guesses/day per IP; a distributed attacker isn't stopped, which
+// is the honest bar for a self-hosted binary (see DESIGN-DECISIONS.md).
+const (
+	authFailLimit  = 10
+	authFailWindow = 15 * time.Minute
+	authFailMaxIPs = 4096 // memory cap on tracked IPs (sweep, then evict)
+)
+
+// minTokenLen rejects throwaway tokens at startup. The rate limiter above
+// only slows guessing; the token's entropy is the real defence, and 16
+// characters is the floor below which even limited guessing is a threat.
+const minTokenLen = 16
+
 //go:embed all:web
 var embedded embed.FS
 
@@ -237,6 +254,14 @@ func main() {
 	plainHTTP := flag.Bool("plainhttp", false, "keep serving plain HTTP to non-localhost clients even when the TLS listener is up (e.g. HTTPS port firewalled, or TLS terminated elsewhere)")
 	flag.Parse()
 
+	// A short token invites online guessing that the rate limiter only slows.
+	// Refuse at startup rather than warn: a warning in a Docker log is never
+	// read, and the fix is one command (see README: openssl rand -hex 16).
+	if *token != "" && len(*token) < minTokenLen {
+		log.Fatalf("-token is %d characters; use at least %d (generate one with: openssl rand -hex 16)",
+			len(*token), minTokenLen)
+	}
+
 	var webRoot fs.FS
 	if *dev {
 		webRoot = os.DirFS("web")
@@ -260,11 +285,13 @@ func main() {
 	h := newHub()
 	mux := http.NewServeMux()
 
-	// Sync API. auth() enforces the token when one is configured.
-	mux.HandleFunc("/api/state", auth(*token, st.handleState))
-	mux.HandleFunc("/api/meta", auth(*token, st.handleMeta(h)))
-	mux.HandleFunc("/api/pull", auth(*token, st.handlePull))
-	mux.HandleFunc("/api/push", auth(*token, st.handlePush(h)))
+	// Sync API. auth() enforces the token when one is configured, with a
+	// shared per-IP failure limiter across all four endpoints.
+	limiter := newFailLimiter()
+	mux.HandleFunc("/api/state", auth(*token, limiter, st.handleState))
+	mux.HandleFunc("/api/meta", auth(*token, limiter, st.handleMeta(h)))
+	mux.HandleFunc("/api/pull", auth(*token, limiter, st.handlePull))
+	mux.HandleFunc("/api/push", auth(*token, limiter, st.handlePush(h)))
 
 	// Server-sent events: keepalive pings plus "changed" notifications when
 	// another device writes. Deliberately unauthenticated even when a token is
@@ -425,11 +452,113 @@ func defaultDBPath() string {
 
 /* ==================== auth ==================== */
 
+// failLimiter counts failed token attempts per client IP. Guarded by a plain
+// mutex: auth failures are rare and cheap, so contention is a non-issue.
+type failLimiter struct {
+	mu    sync.Mutex
+	fails map[string]*failTrack
+}
+
+type failTrack struct {
+	count       int
+	windowStart time.Time
+}
+
+func newFailLimiter() *failLimiter {
+	return &failLimiter{fails: make(map[string]*failTrack)}
+}
+
+// blocked reports whether ip has exhausted its failure budget for the
+// current window. Expired windows are reset here, lazily.
+func (l *failLimiter) blocked(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.fails[ip]
+	if !ok {
+		return false
+	}
+	if time.Since(t.windowStart) >= authFailWindow {
+		delete(l.fails, ip)
+		return false
+	}
+	return t.count >= authFailLimit
+}
+
+// fail records one failed attempt from ip.
+func (l *failLimiter) fail(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t, ok := l.fails[ip]
+	if !ok || time.Since(t.windowStart) >= authFailWindow {
+		// Sweep expired entries before growing the map, and if a flood of
+		// distinct IPs (a botnet) keeps it full anyway, evict arbitrary
+		// entries: losing a counter weakens limiting far less than letting
+		// the map grow without bound weakens the server.
+		if len(l.fails) >= authFailMaxIPs {
+			for k, v := range l.fails {
+				if time.Since(v.windowStart) >= authFailWindow {
+					delete(l.fails, k)
+				}
+			}
+			for k := range l.fails {
+				if len(l.fails) < authFailMaxIPs {
+					break
+				}
+				delete(l.fails, k)
+			}
+		}
+		l.fails[ip] = &failTrack{count: 1, windowStart: time.Now()}
+		return
+	}
+	t.count++
+}
+
+// pass clears ip's counter after a successful auth, so a person who fumbles
+// the token a few times while setting up isn't still carrying the strikes.
+func (l *failLimiter) pass(ip string) {
+	l.mu.Lock()
+	delete(l.fails, ip)
+	l.mu.Unlock()
+}
+
+// clientIP picks the address the limiter buckets by. Direct connections use
+// RemoteAddr, which TCP makes unspoofable. When the connection comes from
+// loopback or private space — the documented reverse-proxy deployment —
+// RemoteAddr is the proxy and would put every client in one bucket, so the
+// rightmost X-Forwarded-For value is used instead: that one was appended by
+// the proxy itself and names its immediate client, while values further left
+// arrived from the outside and cost an attacker nothing to forge. A public
+// RemoteAddr ignores the header entirely for the same reason.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !(ip.IsLoopback() || ip.IsPrivate()) {
+		return host
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {
+			return last
+		}
+	}
+	return host
+}
+
 // auth wraps a handler so it requires the bearer token when one is configured.
 // With no token set (typical for localhost/LAN), it's a pass-through.
-func auth(token string, next http.HandlerFunc) http.HandlerFunc {
+func auth(token string, limiter *failLimiter, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if token != "" {
+			ip := clientIP(r)
+			// Refuse before comparing: an over-limit request must not learn
+			// whether its guess was right, or the 429 would slow nothing.
+			if limiter.blocked(ip) {
+				http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
+				return
+			}
 			got := r.Header.Get("X-Vault-Token")
 			if got == "" {
 				if b := r.Header.Get("Authorization"); strings.HasPrefix(b, "Bearer ") {
@@ -439,9 +568,11 @@ func auth(token string, next http.HandlerFunc) http.HandlerFunc {
 			// Constant-time compare: the token is the only gate between the
 			// internet and write access, so don't leak match length via timing.
 			if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+				limiter.fail(ip)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+			limiter.pass(ip)
 		}
 		next(w, r)
 	}

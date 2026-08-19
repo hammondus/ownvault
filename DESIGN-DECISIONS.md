@@ -38,26 +38,36 @@ chosen instead — PBKDF2-SHA256 at 600k iterations and the 12-character master
 password minimum. Adding a lockout would cost usability and buy nothing
 against the threat that actually exists.
 
-### No rate limiting on the server token either — a real gap, not a decision
-`auth()` (`main.go`) does a constant-time compare and returns 401. Nothing
-counts failures, so `/api/*` can be hammered at line rate indefinitely. The
-only limiters on the server are the `/events` connection cap and the
-`MaxBytesReader` body caps.
+### Server token guessing: per-IP failure limiter + token length floor
+`auth()` (`main.go`) sits behind a per-IP failure counter (`failLimiter`):
+more than 10 failed token attempts in 15 minutes gets 429 until the window
+rolls over. Three properties matter more than the numbers:
 
-Why this hasn't bitten: the README's `openssl rand -hex 16` gives a 128-bit
-token, and `vaultId` is 128 bits from `getRandomValues` — both unguessable at
-any request rate. But nothing *enforces* that: `-token hunter2` is accepted
-silently, and then unlimited online guessing is a live attack. On a
-token-less server (the LAN/desktop default) the vault ID is the sole barrier,
-again with unlimited attempts — safe only by entropy, with no depth behind it.
+- **The 429 is issued *before* the compare.** If an over-limit request were
+  still evaluated, a wrong guess (429) and a right guess (200) would look
+  different, and the limiter would slow nothing. The cost is that a
+  legitimate user on a blocked IP also waits out the window — accepted,
+  since a success clears the counter and the PWA works offline meanwhile.
+- **The bucketing IP is unspoofable in both deployments.** A public
+  `RemoteAddr` is used as-is and `X-Forwarded-For` is ignored (anyone can
+  send that header). A loopback/private `RemoteAddr` — the reverse-proxy
+  deployment, where RemoteAddr would put every client in one bucket — uses
+  the *rightmost* XFF value: the one appended by your own proxy, not the
+  attacker-supplied left-hand values.
+- **The map is capped** (4096 IPs, lazy sweep then arbitrary eviction), so a
+  botnet cycling source addresses costs counters, not server memory.
 
-Deferred, not dismissed (TODO.md). The fix that matches this codebase is a
-per-IP failure counter in front of `auth()` — a small mutex-guarded map,
-lazily cleaned, 429 after N failures — no dependency. It won't stop a
-distributed attacker; it turns "unlimited online guessing" into "you need a
-botnet", which is the honest bar for a self-hosted single binary. A minimum
-length/entropy check on `-token` at startup is the cheaper half of the same
-fix and should land with it.
+This turns "unlimited online guessing" into ~1k guesses/day per IP. A
+distributed attacker isn't stopped — that's the honest bar for a self-hosted
+single binary; the token's entropy is the real defence. Which is why the
+other half landed with it: `-token` shorter than 16 characters is a startup
+fatal (a warning in a Docker log is never read), pointing at the README's
+`openssl rand -hex 16`.
+
+Still true on a token-less server (the LAN/desktop default): the 128-bit
+vault ID is the sole barrier, with unlimited attempts — a guess returns an
+empty vault, not a 401, so there is no failure signal to limit. Safe by
+entropy alone; the ID is minted by `getRandomValues`, never user-chosen.
 
 ## Post-security-review fixes (2026-07)
 
