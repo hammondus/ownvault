@@ -13,6 +13,11 @@
 # copy of the mkcert root CA, kept locally for setting up new devices
 /mkcert-rootCA.crt
 
+# Real configuration. Only .env.example belongs in git.
+.env
+*.env
+!.env.example
+
 # macOS
 .DS_Store
 
