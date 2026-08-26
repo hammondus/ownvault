@@ -4,6 +4,33 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Create gate probes server auth; only a 401 blocks (2026-08)
+
+Creating a vault on a token-protected server used to succeed locally and
+then fail every push with a silent 401 — the create path never asked for the
+token (only connect did), and the only symptom was a status line in
+Settings. Found in the first real deployment: the first sign of trouble was
+the *second* device failing to connect to a vault the server had never seen.
+
+"Start a new vault instead" now probes `/api/state` (the purpose-built
+reachability/auth endpoint) with whatever token was typed, and refuses to
+advance to the create form unless the server answered and accepted the
+token. Choices within that:
+
+- **No token field on the create form**: the create form is also the offline
+  and no-token-server path; a field that is usually irrelevant invites
+  confusion, and the connect screen already has the field — the gate just
+  has to enforce it.
+- **An unreachable server blocks too, with a message pointing at "Use
+  offline only".** First instinct was to let it pass (offline-first), but
+  offline-first doesn't apply to initial setup: a fresh device loaded this
+  very page from the server, so the server was reachable moments ago. The
+  only offline route to the connect screen is a previously cached shell, and
+  a user genuinely creating offline has the explicit offline button — which
+  disables sync, so nothing 401s silently later. Blocking both outcomes
+  means a *synced* vault can only ever be created after the server
+  affirmatively accepted the token; there is no residual silent-401 gap.
+
 ## Extension: offscreen document as the vault process (2026-08)
 
 The Chrome MV3 extension reuses vault.js/totp.js/sync.js unmodified (the

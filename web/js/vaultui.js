@@ -312,13 +312,38 @@
 
   // "Start a new vault instead": keep any token the user typed (a shared server
   // may require it even to create), mint a fresh namespace, and collect a master
-  // password.
+  // password. The token field is optional, so a required-but-missing (or wrong)
+  // token must be caught here with an auth probe — otherwise the new vault
+  // looks fine locally while every push quietly 401s, and the first sign of
+  // trouble is a second device failing to connect. An unreachable server also
+  // blocks: a *synced* vault only makes sense with a server that answers, and
+  // legitimately-offline creation has its own button below (the only way to
+  // even see this screen offline is a cached shell — a fresh device loaded the
+  // page from the server moments ago).
   function handleConnectCreate() {
-    if (window.Sync) {
-      Sync.setToken(byId("connect-token").value.trim());
-      Sync.setVaultId(Sync.newVaultId());
+    if (!window.Sync) {
+      showLock("create");
+      return;
     }
-    showLock("create");
+    var err = byId("connect-error");
+    show(err, false);
+    Sync.setToken(byId("connect-token").value.trim());
+    Sync.checkAuth().then(function (res) {
+      if (res.offline) {
+        err.textContent =
+          "Can't reach the sync server. Check your connection, or use offline only (no sync).";
+        show(err, true);
+        return;
+      }
+      if (res.needsAuth) {
+        err.textContent =
+          "This server requires an access token (missing or incorrect). Enter it above, then start the new vault.";
+        show(err, true);
+        return;
+      }
+      Sync.setVaultId(Sync.newVaultId());
+      showLock("create");
+    });
   }
 
   // "Use offline only": no server at all. Disable sync so we never push, and

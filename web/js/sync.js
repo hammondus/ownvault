@@ -369,6 +369,22 @@ window.Sync = (function () {
     );
   }
 
+  // Lock-gate auth probe: does the server accept the current token? Hits
+  // /api/state (the server's purpose-built light probe). Resolves
+  // { needsAuth, offline } and never rejects; the caller decides what each
+  // outcome means (the create gate blocks on both — a synced vault must not
+  // be created against a server that refused the token or didn't answer).
+  function checkAuth() {
+    return api("/api/state").then(
+      function (res) {
+        return { needsAuth: res.status === 401, offline: false };
+      },
+      function () {
+        return { needsAuth: false, offline: true };
+      }
+    );
+  }
+
   function syncSoon() {
     if (!isEnabled()) return;
     clearTimeout(debounceTimer);
@@ -455,6 +471,7 @@ window.Sync = (function () {
     syncNow: syncNow,
     syncSoon: syncSoon,
     bootstrap: bootstrap,
+    checkAuth: checkAuth,
     start: start,
     stop: stop
   };
