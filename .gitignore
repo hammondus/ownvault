@@ -1,6 +1,7 @@
 # build output
 /myapp
 /ownvault
+/dist/
 
 # sync database (SQLite; created next to the executable at runtime)
 *.db

@@ -1,0 +1,135 @@
+/* Own Vault extension popup — midnight scheme, matching the PWA. */
+:root {
+  --bar-bg: #0a1f3b;
+  --page-bg: #f4f6f8;
+  --fg: #22292f;
+  --card-bg: #ffffff;
+  --accent: #4d9fff;
+  --dim: #8a939c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 340px;
+  max-height: 560px;
+  margin: 0;
+  font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--page-bg);
+  color: var(--fg);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bar-bg);
+  color: #fff;
+  padding: 10px 12px;
+}
+.bar-title { font-weight: 600; }
+
+section { padding: 12px; }
+
+label { display: block; margin-bottom: 10px; font-size: 0.85rem; }
+.dim { color: var(--dim); font-weight: normal; }
+
+input[type="text"], input[type="password"], input[type="url"], input[type="search"] {
+  width: 100%;
+  margin-top: 3px;
+  padding: 8px;
+  border: 1px solid #cfd6dd;
+  border-radius: 6px;
+  font: inherit;
+  background: var(--card-bg);
+}
+
+.btn {
+  width: 100%;
+  padding: 9px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.icon-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0 0 8px;
+  font: inherit;
+}
+
+.hint { color: var(--dim); font-size: 0.85rem; }
+.err { color: #c0392b; font-size: 0.85rem; }
+
+.section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  margin: 10px 0 4px;
+}
+
+.pw-list { list-style: none; margin: 0; padding: 0; }
+.pw-list li {
+  background: var(--card-bg);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.pw-list li:hover { outline: 2px solid var(--accent); }
+.pw-item-title { font-weight: 600; }
+.pw-item-sub { font-size: 0.8rem; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+#list-view { max-height: 480px; overflow-y: auto; }
+
+#detail-view h2 { margin: 4px 0 10px; font-size: 1.05rem; }
+
+.field { margin-bottom: 10px; }
+.field-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+}
+.field-body { display: flex; align-items: center; gap: 6px; }
+.field-value {
+  flex: 1;
+  word-break: break-all;
+  background: var(--card-bg);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.field-value.masked { -webkit-text-security: disc; }
+.totp-code { font-family: ui-monospace, Menlo, monospace; font-size: 1.1rem; letter-spacing: 0.05em; }
+.totp-time { flex: 0 0 auto; min-width: 2.2em; text-align: right; font-size: 0.75rem; color: var(--dim); }
+
+#fill-btn { margin-top: 6px; }
+
+.toast {
+  position: fixed;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bar-bg);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 14px;
+  font-size: 0.8rem;
+}

@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Own Vault",
+  "version": "0.1.0",
+  "description": "Companion extension for an Own Vault server: unlock, search, and fill logins; copy passwords and verification codes.",
+  "icons": {
+    "128": "icons/icon-192.png",
+    "512": "icons/icon-512.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "128": "icons/icon-192.png"
+    }
+  },
+  "background": {
+    "service_worker": "sw.js"
+  },
+  "permissions": ["offscreen", "tabs", "clipboardWrite"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}

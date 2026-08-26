@@ -295,6 +295,39 @@ Supporting flows the above depends on:
   until reinstalled.
 
 
+# Browser extension
+
+`extension/` holds a Chrome MV3 companion extension; `make extension`
+assembles it into `dist/extension/` (load unpacked from chrome://extensions).
+The shared modules — `vault.js`, `totp.js`, `sync.js`, `argon2.min.js` — are
+copied from `web/js/` at build time, never checked in twice; web/js stays the
+single source of truth. `sync.js` gained a `serverUrl` config (localStorage,
+empty = same origin) because extension pages aren't same-origin with the Go
+server; the PWA path is unchanged.
+
+Architecture (all extension-specific code in `extension/`):
+
+- **offscreen.js / offscreen.html** — the vault host. An MV3 offscreen
+  document runs the shared modules and holds the unlocked (non-extractable)
+  vault key in memory; MV3 service workers are evicted after ~30 s idle and
+  can't. Owns auto-lock (same 5 min), sync, and the clipboard wipe timer
+  (the popup dies on focus loss, so its own timer would too). Answers all
+  `ov:*` runtime messages.
+- **sw.js** — deliberately tiny: guarantees the offscreen document exists
+  (`ov:ensure`), nothing else.
+- **popup.js/html/css** — connect (server URL + Vault ID + token) → unlock →
+  list with search and a "this site" match section → per-entry detail with
+  copy buttons, live TOTP, and a Fill button. Secrets are fetched per entry
+  on demand (`ov:credentials`), never held in bulk in the popup.
+- **content.js** — passive fill script: acts only on an `ov:fill` message
+  (sent by the popup, user-initiated, active tab only). Fills via the native
+  value setter + input/change events so framework-bound forms notice.
+
+v1 is read + fill + copy: editing, restore, and vault creation stay in the
+PWA — the extension connects to an existing vault. Site matching is by
+hostname suffix (entry host must equal, or be a parent domain of, the tab
+host — never the reverse).
+
 # Public Use
 As the server is zero trust, if you want public sync on your devices, you can
 set up your own, or, with their permission, use someone elses.

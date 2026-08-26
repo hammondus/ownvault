@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="bar">
+    <span class="bar-title">🔐 Own Vault</span>
+    <button id="lock-btn" class="icon-btn" hidden aria-label="Lock">🔒</button>
+  </header>
+
+  <!-- connect: first run, no server configured -->
+  <section id="connect-view" hidden>
+    <p class="hint">Connect to your Own Vault server. Find the Vault ID in the
+      app under Settings.</p>
+    <form id="connect-form">
+      <label>Server URL
+        <input id="c-server" type="url" placeholder="https://vault.example.com" required
+               autocomplete="off" spellcheck="false">
+      </label>
+      <label>Vault ID
+        <input id="c-vault" type="text" required autocomplete="off" spellcheck="false">
+      </label>
+      <label>Server token <span class="dim">(if the server sets one)</span>
+        <input id="c-token" type="password" autocomplete="off">
+      </label>
+      <p id="connect-err" class="err" hidden></p>
+      <button type="submit" class="btn">Connect</button>
+    </form>
+  </section>
+
+  <!-- unlock -->
+  <section id="unlock-view" hidden>
+    <form id="unlock-form">
+      <label>Master password
+        <input id="u-pw" type="password" autocomplete="off" required>
+      </label>
+      <p id="unlock-err" class="err" hidden></p>
+      <button type="submit" class="btn">Unlock</button>
+    </form>
+  </section>
+
+  <!-- list -->
+  <section id="list-view" hidden>
+    <input id="search" type="search" placeholder="Search…" autocomplete="off" spellcheck="false">
+    <div id="site-block" hidden>
+      <div class="section-label">This site</div>
+      <ul id="site-list" class="pw-list"></ul>
+    </div>
+    <div class="section-label" id="all-label">All entries</div>
+    <ul id="pw-list" class="pw-list"></ul>
+    <p id="empty" class="hint" hidden></p>
+  </section>
+
+  <!-- detail -->
+  <section id="detail-view" hidden>
+    <button id="back-btn" class="link-btn">← Back</button>
+    <h2 id="d-title"></h2>
+    <div id="d-fields"></div>
+    <button id="fill-btn" class="btn" hidden>Fill on this page</button>
+  </section>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="popup.js"></script>
+</body>
+</html>

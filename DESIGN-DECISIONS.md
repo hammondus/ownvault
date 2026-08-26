@@ -4,6 +4,43 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Extension: offscreen document as the vault process (2026-08)
+
+The Chrome MV3 extension reuses vault.js/totp.js/sync.js unmodified (the
+payoff of keeping them DOM-free), assembled by `make extension` into
+`dist/extension/` — a build-time copy, not checked-in duplicates, so web/js
+remains the single source of truth. Decisions:
+
+- **The unlocked key lives in an offscreen document, not the service
+  worker.** MV3 service workers are evicted after ~30 s idle; the unlocked
+  vault key is a non-extractable CryptoKey that cannot be serialized into
+  chrome.storage (by design — non-extractability is the point). An offscreen
+  document persists for the browser session, runs real DOM/WebCrypto, and
+  gives IndexedDB + localStorage the same shape the PWA code expects. The
+  service worker's only job is creating it.
+- **Chrome-first.** Firefox's MV3 has no offscreen API (its event pages
+  would host the vault instead); supporting it is a different lifetime
+  model, deferred until wanted.
+- **v1 is read + fill + copy.** Editing, restore, create, conflict
+  resolution stay in the PWA. Cuts the popup to a fraction of vaultui.js
+  and keeps the extension's write path (and its attack surface) at zero.
+- **Fill is explicit, not inline.** No injected dropdowns in page forms —
+  the user picks an entry in the popup and clicks Fill (or copies). Inline
+  UI is where autofill spoofing bugs live; explicit fill still removes the
+  clipboard from the common path. The content script is passive: no state,
+  no reading the page, acts only on the popup's message to the active tab.
+- **Site matching is suffix-only and one-directional**: the entry's host
+  must equal, or be a parent domain of, the tab's host. An entry saved for
+  example.com offers itself on login.example.com; an entry for
+  app.example.com never offers itself elsewhere.
+- **Secrets move per entry, on demand.** The popup list carries metadata
+  only; ov:credentials fetches one entry's password when viewed/filled, and
+  the TOTP code is computed in the offscreen document so the TOTP *secret*
+  never leaves it.
+- **Clipboard wipe lives in the offscreen document** (execCommand on a
+  focused textarea — the documented offscreen clipboard path): the popup
+  closes on focus loss, so a popup-owned timer would never fire.
+
 ## Deploy: primed's staging/promote pattern, with per-instance DBs (2026-08)
 
 The Docker deploy copies `~/dev/_live/primed`'s shape: the compose file only

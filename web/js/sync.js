@@ -12,7 +12,10 @@
  *
  * Config (localStorage, not secret-bearing beyond the shared token):
  *   syncEnabled ("0" disables), syncToken (bearer token for public servers),
- *   vaultId (which namespace on the server this device's vault lives in).
+ *   vaultId (which namespace on the server this device's vault lives in),
+ *   serverUrl (base URL of the sync server; empty = same origin — the PWA
+ *   case. The browser extension sets it, since its pages live on a
+ *   chrome-extension:// origin and every call must name the server).
  *
  * The vault id is the multi-tenant key: one server can hold many unrelated
  * people's vaults, each under its own random id, and the server only ever sees
@@ -26,6 +29,7 @@ window.Sync = (function () {
   var ENABLED_KEY = "syncEnabled";
   var TOKEN_KEY = "syncToken";
   var VAULT_KEY = "vaultId";
+  var SERVER_KEY = "serverUrl";
   var DEBOUNCE_MS = 600;
 
   var listeners = [];
@@ -70,6 +74,23 @@ window.Sync = (function () {
   function setToken(t) {
     try {
       localStorage.setItem(TOKEN_KEY, t || "");
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function getServerUrl() {
+    try {
+      // Normalized without a trailing slash so paths concatenate cleanly.
+      return (localStorage.getItem(SERVER_KEY) || "").replace(/\/+$/, "");
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function setServerUrl(u) {
+    try {
+      localStorage.setItem(SERVER_KEY, (u || "").trim().replace(/\/+$/, ""));
     } catch (e) {
       /* ignore */
     }
@@ -153,7 +174,7 @@ window.Sync = (function () {
   function api(path, opts) {
     opts = opts || {};
     opts.headers = headers(opts.headers);
-    return fetch(path, opts);
+    return fetch(getServerUrl() + path, opts);
   }
 
   function pull() {
@@ -367,7 +388,7 @@ window.Sync = (function () {
       // us for other people's writes. (app.js keeps a separate, unscoped
       // EventSource purely for reachability.)
       var vid = getVaultId();
-      var es = new EventSource("/events" + (vid ? "?vault=" + encodeURIComponent(vid) : ""));
+      var es = new EventSource(getServerUrl() + "/events" + (vid ? "?vault=" + encodeURIComponent(vid) : ""));
       events = es;
       es.onopen = function () {
         sseRetryMs = 5000;
@@ -423,6 +444,8 @@ window.Sync = (function () {
     setEnabled: setEnabled,
     getToken: getToken,
     setToken: setToken,
+    getServerUrl: getServerUrl,
+    setServerUrl: setServerUrl,
     getVaultId: getVaultId,
     setVaultId: setVaultId,
     newVaultId: newVaultId,

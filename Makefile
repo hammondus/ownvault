@@ -22,7 +22,7 @@ define set_env_var
 	@awk -v k='$(1)' -v v='$(2)' -F= '$$1==k{next} {print} END{print k"="v}' .env > .env.new && mv .env.new .env
 endef
 
-.PHONY: build test run release clean \
+.PHONY: build test run release clean extension \
         docker-build deploy deploy-built deploy-staging deploy-staging-built \
         promote rollback images smoke smoke-staging logs logs-staging
 
@@ -53,6 +53,20 @@ release:
 ## clean: remove build output
 clean:
 	rm -rf $(BINARY) dist
+
+## extension: assemble the Chrome extension into dist/extension
+# The extension reuses the PWA's crypto/storage/sync modules VERBATIM —
+# web/js is the single source of truth, and this copy step (not checked-in
+# copies) is what keeps it that way. Load via chrome://extensions ->
+# "Load unpacked" -> dist/extension; re-run this target after edits.
+EXT_SHARED = web/js/vault.js web/js/totp.js web/js/sync.js web/js/argon2.min.js
+extension:
+	rm -rf dist/extension
+	mkdir -p dist/extension/shared dist/extension/icons
+	cp extension/* dist/extension/
+	cp $(EXT_SHARED) dist/extension/shared/
+	cp web/icons/icon-192.png web/icons/icon-512.png dist/extension/icons/
+	@echo "built dist/extension — load it unpacked from chrome://extensions"
 
 ## docker-build: build the container image for the current revision
 docker-build:

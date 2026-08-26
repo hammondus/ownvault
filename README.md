@@ -205,10 +205,22 @@ public deployment, use a real certificate (Let's Encrypt / Caddy) instead.
   - `js/vaultui.js` — the lock gate, list/search, record modal, conflict UI.
   - `js/app.js` — app-shell chrome (drawer, routing, reachability).
 
+## Browser extension
+
+The PWA can't autofill other pages — that needs an extension. `extension/`
+holds a Chrome (MV3) companion that reuses the same vault modules verbatim:
+connect it to your server with the Vault ID and token, unlock with the
+master password, and it shows matches for the current site, fills the login
+form on click, and copies passwords and verification codes (passwords with
+the same auto-clearing clipboard). It is read-only by design — add and edit
+entries in the app.
+
+To build and install: `make extension`, then **chrome://extensions** →
+enable Developer mode → **Load unpacked** → pick `dist/extension`.
+
 ## Non-goals
 
-- **Autofill.** Not possible for pure web tech (it needs a native app or browser
-  extension). Own Vault leans into what a PWA does well: fast offline access,
-  install-to-homescreen, and copy buttons that auto-clear the clipboard. The
-  vault logic is a clean, DOM-free module so a browser extension (which gets
-  autofill for free) can be added later without rework.
+- **Native-app autofill on phones.** The extension covers desktop browsers;
+  iOS/Android system autofill needs a native app, and the PWA instead leans
+  into what it does well: fast offline access, install-to-homescreen, and
+  copy buttons that auto-clear the clipboard.
