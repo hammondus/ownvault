@@ -342,6 +342,13 @@ go build -o ownvault .              # production: single binary with web/ embedd
 executable). `-token` (or env `OWNVAULT_TOKEN`) requires that shared secret on
 all `/api/*` calls — set it for any public/internet-reachable deployment.
 
+Deployment is a container behind Nginx Proxy Manager (NPM terminates TLS; the
+container is plain HTTP — `certs/` must stay out of the image or the internal
+TLS listener + redirect would arm). `Dockerfile`, `docker-compose.yaml`, and
+the Makefile implement the staging → promote → rollback flow; DEPLOY.md is
+the runbook. Staging has its own DB volume and is a separate vault world —
+test vaults only.
+
 There are no tests or linters configured. `web/` files are embedded at build
 time, so changes to them require a rebuild unless running with `-dev`. The Go
 sync layer uses the pure-Go `modernc.org/sqlite` driver (no CGo), so

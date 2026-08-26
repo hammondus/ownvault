@@ -311,6 +311,12 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-store")
+		// nginx (e.g. Nginx Proxy Manager terminating TLS in front of this)
+		// buffers proxied responses by default, which can hold SSE events back
+		// from the client. This response header is nginx's documented opt-out,
+		// honored per-response with no proxy config needed; other servers
+		// ignore it.
+		w.Header().Set("X-Accel-Buffering", "no")
 
 		// ?vault=<id> scopes the "changed" notifications to one vault. The
 		// reachability probe in app.js connects without it and just rides the

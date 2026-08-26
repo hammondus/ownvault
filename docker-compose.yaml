@@ -1,0 +1,104 @@
+# ownvault server. Two instances from one image: production, and an opt-in
+# staging copy for proving new code before it serves real vaults. See
+# DEPLOY.md for the runbook; `make deploy-staging`, `make promote` and
+# `make rollback` drive this file.
+#
+#   docker compose up -d                          # production only
+#   docker compose --profile staging up -d        # production + staging
+#
+# Nginx Proxy Manager terminates TLS and proxies to the containers by name on
+# the shared `blobbyboo` network: ownvault:8080 and ownvault-staging:8080.
+# No published ports — NPM is the only way in.
+#
+# ---------------------------------------------------------------------------
+# THIS FILE ONLY RUNS IMAGES — it does not build them (no `build:` key).
+# Images are built by `make deploy-staging` as `ownvault:<git-sha>` and this
+# file selects one by tag, so:
+#
+#   - `make promote` points production at the exact image staging proved —
+#     promotion cannot rebuild and ship untested bytes;
+#   - `make rollback TAG=<sha>` is a container swap, not a rebuild;
+#   - `docker compose up -d` can never silently recompile on the serving box.
+#
+# ---------------------------------------------------------------------------
+# Unlike primed (where staging can share production's read-only index), the
+# state here is a WRITABLE SQLite database, so each instance gets its own
+# named volume and they must never share one: two servers writing one SQLite
+# file invites lock contention, and a staging bug would be corrupting real
+# vaults. Staging starts empty — connect a throwaway test vault to it, never
+# your real one. That isolation is also structural: each hostname is its own
+# browser origin, so staging has its own IndexedDB, service worker, and PWA
+# install, and can't touch a vault that lives on the production hostname.
+#
+# .env beside this file (see .env.example):
+#
+#   OWNVAULT_TOKEN=<openssl rand -hex 16>   # sync auth — required when public
+#   OWNVAULT_STAGING_TOKEN=<another one>    # staging's; falls back to prod's
+#   OWNVAULT_TAG=<git sha>                  # machine-managed: `make promote`
+#   OWNVAULT_STAGING_TAG=<git sha>          # machine-managed: `make deploy-staging`
+
+# Everything the two instances share. An anchor rather than a second service
+# block: a staging copy that has drifted from production is not a rehearsal.
+# The only permitted differences are the ones spelled out under
+# ownvault-staging.
+x-ownvault-common: &ownvault-common
+  restart: unless-stopped
+  networks:
+    - blobbyboo
+
+services:
+  ownvault:
+    <<: *ownvault-common
+    image: "ownvault:${OWNVAULT_TAG:?set OWNVAULT_TAG in .env — run 'make promote' or 'make rollback TAG=<sha>' (fresh box: 'make deploy' first, see DEPLOY.md)}"
+    container_name: ownvault
+    volumes:
+      - ownvault-data:/data
+    environment:
+      # `:?` here and not on staging, deliberately: Compose interpolates every
+      # service before starting any, but a bare `docker compose up -d` starts
+      # production only (staging is behind a profile), so this is the guard
+      # that catches an unconfigured box. The token is required because this
+      # compose file IS the public deployment — without it, anyone who finds
+      # the URL can tamper with or delete the (encrypted) vaults.
+      OWNVAULT_TOKEN: "${OWNVAULT_TOKEN:?set OWNVAULT_TOKEN in .env (openssl rand -hex 16) — public sync must not run open}"
+    # The image CMD already runs -addr :8080 -db /data/ownvault.db; nothing to
+    # override. No healthcheck: distroless has no shell or curl for a
+    # CMD-SHELL probe — `make smoke` probes from outside instead.
+
+  # The staging copy. Opt-in via the profile, so a plain `docker compose up -d`
+  # on the production host can never start it by accident.
+  #
+  # Point a second Nginx Proxy Manager host at ownvault-staging:8080.
+  ownvault-staging:
+    <<: *ownvault-common
+    profiles:
+      - staging
+    # `:-unset`, not `:?`: a `:?` here would fire even for production-only
+    # commands (interpolation runs across all services — the same trap primed
+    # documents). Staging is only started by `make deploy-staging`, which
+    # writes the tag first; if it is somehow unset, `ownvault:unset` does not
+    # exist and the run fails loudly anyway.
+    image: "ownvault:${OWNVAULT_STAGING_TAG:-unset}"
+    container_name: ownvault-staging
+    volumes:
+      # Its OWN volume — see the header note. Never production's.
+      - ownvault-staging-data:/data
+    environment:
+      # A separate token means the one you paste into test devices (or share
+      # with a tester) can never touch production. Falls back to the
+      # production token so first-time setup needs only one secret.
+      OWNVAULT_TOKEN: "${OWNVAULT_STAGING_TOKEN:-${OWNVAULT_TOKEN:-}}"
+
+volumes:
+  # Explicit names so backups don't depend on the compose project name.
+  # The DB is client-encrypted ciphertext end to end, so a host-level copy is
+  # a safe backup:  docker run --rm -v ownvault-data:/data -v "$PWD":/out \
+  #                   alpine cp /data/ownvault.db /out/ownvault-backup.db
+  ownvault-data:
+    name: ownvault-data
+  ownvault-staging-data:
+    name: ownvault-staging-data
+
+networks:
+  blobbyboo:
+    external: true

@@ -1,0 +1,26 @@
+# Keep the build context small, and keep two things out of the image on
+# purpose:
+#
+#   - certs/ — their presence would start the TLS listener and its
+#     plain-HTTP redirect inside the container, breaking the reverse-proxy
+#     deployment (NPM terminates TLS; the container must stay plain HTTP).
+#   - *.db — a local dev database copied into an image would ship (encrypted)
+#     vault data to wherever the image goes.
+.git
+.gitignore
+.claude/
+.dockerignore
+certs/
+mkcert-rootCA.crt
+*.db
+*.db-shm
+*.db-wal
+.env
+*.env
+ownvault
+myapp
+dist/
+assets/
+testes/
+*.md
+.DS_Store

@@ -1,0 +1,136 @@
+# ownvault — zero-knowledge password vault: Go server + PWA in web/.
+# Deploys as a container behind Nginx Proxy Manager (NPM terminates TLS; the
+# container serves plain HTTP). See DEPLOY.md for the staging/promote runbook.
+
+BINARY := ownvault
+
+# Static, stripped builds; pure Go (modernc sqlite), so CGO off everywhere.
+GOFLAGS := -trimpath
+LDFLAGS := -s -w
+
+# Deferred (`=`, not `:=`) so targets that don't need git never shell out for
+# it. -dirty marks a tree with uncommitted changes: such a tag describes no
+# commit, and docker-build warns about it.
+REV = $(shell git rev-parse --short=12 HEAD 2>/dev/null)$(shell git diff --quiet HEAD 2>/dev/null || echo -dirty)
+PROD_URL = $(shell grep -m1 '^OWNVAULT_URL=' .env 2>/dev/null | cut -d= -f2-)
+STAG_URL = $(shell grep -m1 '^OWNVAULT_STAGING_URL=' .env 2>/dev/null | cut -d= -f2-)
+
+# Rewrite one KEY=VALUE in .env, preserving every other line. awk rather than
+# `sed -i`, whose in-place flag is spelled differently on macOS and Linux.
+define set_env_var
+	@touch .env
+	@awk -v k='$(1)' -v v='$(2)' -F= '$$1==k{next} {print} END{print k"="v}' .env > .env.new && mv .env.new .env
+endef
+
+.PHONY: build test run release clean \
+        docker-build deploy deploy-built deploy-staging deploy-staging-built \
+        promote rollback images smoke smoke-staging logs logs-staging
+
+## build: compile the server binary for this machine (web/ embedded)
+build:
+	go build $(GOFLAGS) -o $(BINARY) .
+
+## test: vet + tests (JS crypto/UI is exercised by the verify skill, not here)
+test:
+	go vet ./...
+	go test ./...
+
+## run: dev server — serves web/ from disk, edit + refresh, throwaway DB
+run:
+	go run . -dev -db /tmp/ownvault-dev.db
+
+## release: cross-compiled static binaries into dist/
+# linux/arm64 is the container deploy target (belt and braces — the image
+# builds its own binary); the rest serve the documented "desktop only" mode,
+# where a person runs the server on their own machine with no Docker at all.
+release:
+	rm -rf dist
+	CGO_ENABLED=0 GOOS=linux  GOARCH=arm64 go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o dist/$(BINARY)-linux-arm64 .
+	CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o dist/$(BINARY)-linux-amd64 .
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64 .
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o dist/$(BINARY)-windows-amd64.exe .
+
+## clean: remove build output
+clean:
+	rm -rf $(BINARY) dist
+
+## docker-build: build the container image for the current revision
+docker-build:
+	@test -n "$(REV)" || { echo "no git revision — build from a git checkout"; exit 1; }
+	@case "$(REV)" in *-dirty) echo "WARNING: building from a DIRTY tree as ownvault:$(REV) — this tag describes no commit";; esac
+	docker build -t ownvault:$(REV) .
+
+## deploy-staging: pull, build this revision, run it as staging, smoke-test
+# The pull is its own line and the rest is a sub-make: make expands a recipe
+# in full before running any of it, so $(REV) inline here would resolve
+# against the PRE-pull HEAD (the trap primed's Makefile documents).
+deploy-staging:
+	git pull
+	@$(MAKE) --no-print-directory deploy-staging-built
+
+## deploy-staging-built: stage the CURRENT tree, no pull
+# The escape hatch for testing a branch or a hotfix edited on the box —
+# `deploy-staging` would pull straight over either.
+deploy-staging-built: docker-build
+	$(call set_env_var,OWNVAULT_STAGING_TAG,$(REV))
+	docker compose --profile staging up -d ownvault-staging
+	@echo "staging now on ownvault:$(REV)"
+	@$(MAKE) --no-print-directory smoke-staging
+
+## promote: point PRODUCTION at the image staging is running. No rebuild.
+promote:
+	@tag=$$(grep -m1 '^OWNVAULT_STAGING_TAG=' .env | cut -d= -f2-); \
+	test -n "$$tag" || { echo "no OWNVAULT_STAGING_TAG in .env — run 'make deploy-staging' first"; exit 1; }; \
+	docker image inspect ownvault:$$tag >/dev/null 2>&1 || { echo "image ownvault:$$tag is gone — rebuild with 'make deploy-staging'"; exit 1; }; \
+	prev=$$(grep -m1 '^OWNVAULT_TAG=' .env | cut -d= -f2-); \
+	echo "promoting ownvault:$$tag to production (rollback with: make rollback TAG=$$prev)"; \
+	$(MAKE) --no-print-directory rollback TAG=$$tag
+
+## rollback: point production at any built tag — make rollback TAG=<sha>
+# Also the engine behind `promote`: a promotion and a rollback are the same
+# operation pointed at different tags.
+rollback:
+	@test -n "$(TAG)" || { echo "usage: make rollback TAG=<sha>   (see 'make images')"; exit 1; }
+	@docker image inspect ownvault:$(TAG) >/dev/null 2>&1 || { echo "no image ownvault:$(TAG) — see 'make images'"; exit 1; }
+	$(call set_env_var,OWNVAULT_TAG,$(TAG))
+	docker compose up -d ownvault
+	@$(MAKE) --no-print-directory smoke
+
+## deploy: build and go straight to production, skipping staging
+# For config-only changes or fixes already proven. Prefer deploy-staging +
+# promote: this ships an image no instance has run.
+deploy:
+	git pull
+	@$(MAKE) --no-print-directory deploy-built
+
+deploy-built:
+	@$(MAKE) --no-print-directory docker-build
+	@$(MAKE) --no-print-directory rollback TAG=$(REV)
+
+## images: the tags available to promote or roll back to, newest first
+images:
+	@docker images ownvault --format '{{.Tag}}\t{{.CreatedSince}}\t{{.Size}}' | grep -v '^<none>' | head -20
+
+## smoke: production answers over its public URL
+# The root path serves the app shell, so a 200 proves NPM -> container -> Go
+# server end to end. Retries cover the container's startup moment.
+smoke:
+	@test -n "$(PROD_URL)" || { echo "set OWNVAULT_URL in .env to smoke-test"; exit 0; }
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+	  curl -sf -m 10 -o /dev/null "$(PROD_URL)/" && { echo "smoke ok: $(PROD_URL)"; exit 0; }; sleep 2; \
+	done; echo "SMOKE FAILED: $(PROD_URL)/ not answering"; exit 1
+
+## smoke-staging: same check against the staging URL
+smoke-staging:
+	@test -n "$(STAG_URL)" || { echo "set OWNVAULT_STAGING_URL in .env to smoke-test"; exit 0; }
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+	  curl -sf -m 10 -o /dev/null "$(STAG_URL)/" && { echo "smoke ok: $(STAG_URL)"; exit 0; }; sleep 2; \
+	done; echo "SMOKE FAILED: $(STAG_URL)/ not answering"; exit 1
+
+## logs: follow production logs
+logs:
+	docker compose logs -f ownvault
+
+## logs-staging: follow staging logs
+logs-staging:
+	docker compose --profile staging logs -f ownvault-staging

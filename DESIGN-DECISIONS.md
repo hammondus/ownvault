@@ -4,6 +4,41 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Deploy: primed's staging/promote pattern, with per-instance DBs (2026-08)
+
+The Docker deploy copies `~/dev/_live/primed`'s shape: the compose file only
+runs images tagged `ownvault:<git-sha>` (never builds), staging is behind a
+compose profile, `make promote` points production at the exact image staging
+proved, and `make rollback TAG=` is a container swap. The reasons are
+primed's and aren't restated here (see its docker-compose.yaml header).
+
+What's different, and why:
+
+- **Each instance owns a writable SQLite volume; they never share.** Primed's
+  instances share one read-only mmap'd index — the cheap case. Here the state
+  is a live database: sharing would mean lock contention between two servers
+  and a staging bug corrupting real vaults. Staging starts empty and holds
+  test vaults only. The browser reinforces the split for free: hostname =
+  origin = its own IndexedDB / service worker / PWA install.
+- **TLS stays out of the container entirely.** The server grows a TLS
+  listener (plus a plain-HTTP→HTTPS redirect) whenever `certs/` exists, which
+  is a LAN-dev convenience; behind NPM it would break every proxied request.
+  `.dockerignore` excludes `certs/`, making the container structurally unable
+  to enter that mode — no `-plainhttp` flag needed. HSTS is enabled in NPM,
+  since the app only sends it from its own TLS listener.
+- **SSE through nginx**: `/events` sets `X-Accel-Buffering: no` so nginx
+  streams events instead of buffering them (buffered SSE = laggy sync and a
+  lying reachability indicator). The 25 s keepalive already sits under
+  nginx's default 60 s `proxy_read_timeout`.
+- **Separate staging token** (`OWNVAULT_STAGING_TOKEN`, falling back to the
+  production token): a token pasted into test devices shouldn't be a
+  production credential. The tokens are server-wide gates, not per-vault
+  secrets, so nothing else distinguishes the instances.
+- **No smoke endpoint was added**: `make smoke` GETs `/`, which serves the
+  app shell and proves NPM → container → server end to end. A `/api/health`
+  would tell an unauthenticated caller the service exists in more detail than
+  a password server needs to volunteer.
+
 ## TOTP codes in the vault: one factor, on purpose (2026-08)
 
 Entries can hold the site's 2FA setup key (`totp` payload field); the record
