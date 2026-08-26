@@ -30,7 +30,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ownvault .
 # for it to be readable by anything but the server.
 RUN mkdir -m 0700 /out/data
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 WORKDIR /app
 COPY --from=build /out/ownvault /app/ownvault
 
