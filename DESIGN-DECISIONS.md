@@ -4,6 +4,41 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## TOTP codes in the vault: one factor, on purpose (2026-08)
+
+Entries can hold the site's 2FA setup key (`totp` payload field); the record
+modal renders the live 6-digit code. Storing TOTP secrets beside passwords
+collapses two factors into one — whoever opens the vault gets both. That's
+the standard criticism of Bitwarden's identical feature, and it's accepted
+here for the same reason: the second factor's real-world value is mostly
+against *password* compromise (phishing, reuse, the site's own breach) —
+threats where the vault isn't the thing stolen. Against vault compromise it
+was already game over. Per-entry opt-in leaves the choice with the user;
+2FA for the highest-stakes accounts can stay on a separate device by not
+entering it here.
+
+Choices inside that:
+
+- **Fixed parameters** (SHA-1 / 6 digits / 30 s): authenticator apps assume
+  them and mostly ignore `otpauth://` parameters claiming otherwise. An URI
+  declaring different parameters is rejected at save rather than stored and
+  silently wrong. (Same stance as `hammondus/mfa`, which was the test oracle
+  for `totp.js` — RFC 6238 Appendix B vectors, including a >32-bit step to
+  exercise the 64-bit counter, since JS bitwise ops truncate at 32.)
+- **Generation is client JS, not the Go module**: codes must render offline
+  in the browser; TOTP is ~40 lines over WebCrypto HMAC-SHA1. `totp.js` is a
+  separate DOM-free module (not vault.js) so the future extension can import
+  it, and it omits the server-side halves (replay tracking, recovery codes) —
+  a generator has no replay to prevent.
+- **No QR scanning**: every enrolment screen also shows the key as text;
+  camera plus a QR-decode library fails the dependency test.
+- **Copying a code skips the clipboard wipe** the password copy gets: it
+  expires on its own within 30 s, and wiping mid-login is pure annoyance.
+- **Search excludes the key**: matching against base32 noise only produces
+  false hits.
+- **Caveat**: codes come from the device clock; drift past ~30–60 s produces
+  codes the site rejects, and the app can't detect that offline.
+
 ## Argon2id via a vendored WASM module (2026-08)
 
 WebCrypto has no Argon2, and a memory-hard KDF hand-rolled in JS would be

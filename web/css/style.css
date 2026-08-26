@@ -703,6 +703,40 @@ body.locked {
   text-security: disc;
 }
 
+/* Live TOTP verification code (record modal): monospace so digits keep a
+   fixed width across the 30s re-render, bar + seconds show time to expiry.
+   The bar fill's width is set from JS via the CSSOM (allowed under the CSP;
+   a style *attribute* would not be). */
+.totp-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.15rem;
+  letter-spacing: 0.05em;
+}
+
+.totp-bar {
+  flex: 0 0 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(138, 147, 156, 0.3);
+  overflow: hidden;
+}
+
+.totp-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.9s linear;
+}
+
+.totp-time {
+  flex: 0 0 auto;
+  min-width: 2.4em;
+  text-align: right;
+  font-size: 0.75rem;
+  color: #8a939c;
+  font-variant-numeric: tabular-nums;
+}
+
 .field-when {
   margin-top: 12px;
   font-size: 0.75rem;

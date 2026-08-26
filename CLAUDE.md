@@ -193,6 +193,13 @@ The following data will be kept for each password entry
 - `critical` flag (boolean) — marks an entry for the printed emergency
   recovery sheet (see UI). Optional; absent/false on entries created before the
   feature.
+- `totp` — the site's 2FA setup key as normalized base32 (RFC 6238 TOTP,
+  fixed at SHA-1 / 6 digits / 30 s). Optional; empty/absent when the entry has
+  no 2FA. `web/js/totp.js` (DOM-free, like vault.js) validates it on save
+  (`Totp.normalize`, which also accepts a pasted `otpauth://` URI and rejects
+  non-default parameters) and generates the live code in the record modal
+  (`Totp.code`, WebCrypto HMAC — no dependency). Excluded from search. See
+  DESIGN-DECISIONS.md for the one-factor trade-off.
 
 These fields are the *encrypted payload* — they live inside each entry's
 ciphertext as a JSON object (JSON, not fixed columns, so future fields like a
@@ -221,6 +228,15 @@ The url field additionally has an icon to open it in a new browser tab, and new
 entries pre-fill the url with `https://` to save typing (a bare scheme is
 treated as empty on save).
 In the modal the password is masked by default with a reveal (show/hide) toggle.
+
+If the entry has an authenticator key (`totp` field), the modal shows a live
+**Verification code** row: the current 6-digit code, a countdown bar, and a
+copy icon (no clipboard wipe — the code self-expires). The 1 s tick derives
+everything from `Date.now()` so a suspended background tab shows the right
+code immediately on resume, and the interval is killed on modal close, entry
+switch, edit, and lock (the closure holds the secret, so it must never
+outlive the modal's plaintext). Critical entries print their authenticator
+key on the emergency recovery sheet.
 
 **Critical entries + emergency recovery sheet.** The add/edit form has a
 "Critical" checkbox (stored as the `critical` payload field); such entries show

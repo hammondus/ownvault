@@ -678,9 +678,69 @@
     ]);
   }
 
+  /* ---------- live TOTP code (view modal) ---------- */
+  // One timer, module-scoped so lock / close / mode-switch can always kill
+  // it: the tick closure holds the secret, and it must not outlive the
+  // modal's plaintext the way a stray interval would.
+
+  var totpTimer = null;
+  var totpCode = ""; // what the ⧉ button copies; cleared with the timer
+
+  function stopTotp() {
+    clearInterval(totpTimer);
+    totpTimer = null;
+    totpCode = "";
+  }
+
+  function totpRow(secret) {
+    var codeNode = el("span", { class: "field-value totp-code", text: "· · ·" });
+    var fill = el("span", { class: "totp-bar-fill" });
+    var bar = el("span", { class: "totp-bar" }, [fill]);
+    var timeNode = el("span", { class: "totp-time" });
+    var copyBtn = el("button", {
+      class: "icon-btn",
+      type: "button",
+      "data-copy-totp": "1",
+      "aria-label": "Copy verification code",
+      text: "⧉"
+    });
+
+    // Everything derives from Date.now() each tick (never a free-running
+    // 30s timer): background tabs suspend timers, and on resume the next
+    // tick lands on the right step immediately instead of drifting.
+    var lastStep = -1;
+    function tick() {
+      var now = Date.now();
+      var secondsLeft = Totp.PERIOD - (Math.floor(now / 1000) % Totp.PERIOD);
+      timeNode.textContent = secondsLeft + "s";
+      fill.style.width = (secondsLeft / Totp.PERIOD) * 100 + "%";
+      var step = Math.floor(now / 1000 / Totp.PERIOD);
+      if (step === lastStep) return;
+      lastStep = step;
+      Totp.code(secret, now).then(
+        function (r) {
+          totpCode = r.code;
+          // Split 3+3: transcribing to another screen is the main use.
+          codeNode.textContent = r.code.slice(0, 3) + " " + r.code.slice(3);
+        },
+        function () {
+          codeNode.textContent = "(invalid key)";
+        }
+      );
+    }
+    tick();
+    totpTimer = setInterval(tick, 1000);
+
+    return el("div", { class: "field" }, [
+      el("div", { class: "field-label", text: "Verification code" }),
+      el("div", { class: "field-body" }, [codeNode, bar, timeNode, copyBtn])
+    ]);
+  }
+
   function openModalView(entry) {
     var card = byId("modal-card");
     card.innerHTML = "";
+    stopTotp(); // switching entries must not leave the old entry's timer running
     card.dataset.mode = "view";
     card.dataset.id = entry.id;
 
@@ -707,6 +767,7 @@
     var body = el("div", { class: "modal-body" }, [
       entry.username ? copyRow("Username", entry.username, "text") : null,
       entry.password ? copyRow("Password", entry.password, "password") : null,
+      entry.totp ? totpRow(entry.totp) : null,
       entry.url ? copyRow("URL", entry.url, "url") : null,
       textField("Notes", entry.notes),
       el("div", { class: "field-when", text: when })
@@ -753,16 +814,16 @@
     ]);
   }
 
-  // The password is masked against shoulder surfing with the same CSS the
-  // view modal uses (-webkit-text-security on a type="text" input) rather
-  // than type="password": browser save-password/autofill heuristics key on
-  // the input type, and a real password field here would invite the browser
-  // to capture vault entries into its own (cloud-synced) password store.
-  function passwordField(value) {
+  // Secrets are masked against shoulder surfing with the same CSS the view
+  // modal uses (-webkit-text-security on a type="text" input) rather than
+  // type="password": browser save-password/autofill heuristics key on the
+  // input type, and a real password field here would invite the browser to
+  // capture vault entries into its own (cloud-synced) password store.
+  function maskedField(name, labelText, value) {
     var input = el("input", {
       class: "form-input masked",
       type: "text",
-      name: "password",
+      name: name,
       autocomplete: "off",
       spellcheck: "false",
       autocorrect: "off",
@@ -773,11 +834,11 @@
       class: "icon-btn",
       type: "button",
       "data-reveal-input": "1",
-      "aria-label": "Show password",
+      "aria-label": "Show " + labelText.toLowerCase(),
       text: "👁"
     });
     return el("div", { class: "form-row" }, [
-      el("span", { class: "form-label", text: "Password" }),
+      el("span", { class: "form-label", text: labelText }),
       el("div", { class: "sync-row" }, [input, toggle])
     ]);
   }
@@ -786,6 +847,7 @@
     entry = entry || {};
     var card = byId("modal-card");
     card.innerHTML = "";
+    stopTotp(); // view -> edit replaces the card; the code row's timer goes with it
     card.dataset.mode = "edit";
     card.dataset.id = entry.id || "";
 
@@ -828,7 +890,12 @@
     var form = el("form", { id: "record-form", class: "modal-body", novalidate: "novalidate" }, [
       inputField("title", "Title", entry.title, "text"),
       inputField("username", "Username", entry.username, "text"),
-      passwordField(entry.password),
+      maskedField("password", "Password", entry.password),
+      // The site's 2FA setup key: bare base32 or a pasted otpauth:// link
+      // (Totp.normalize sorts it out on save). No QR scanning — every site
+      // shows the key as text, and a camera + decoder dependency fails the
+      // stdlib test.
+      maskedField("totp", "Authenticator key (2FA)", entry.totp),
       // Pre-fill the scheme on new entries to save typing; a bare scheme is
       // treated as empty on save.
       inputField("url", "URL", entry.id ? entry.url : entry.url || "https://", "url"),
@@ -876,6 +943,15 @@
       : null;
     var url = form.url.value.trim();
     if (url === "https://" || url === "http://") url = "";
+    // A bad authenticator key blocks the save: storing it would render a
+    // wrong code every 30s, which looks like the site's fault, not a typo.
+    var totp;
+    try {
+      totp = Totp.normalize(form.totp.value);
+    } catch (err) {
+      toast(err.message);
+      return;
+    }
     var fields = {
       id: id || undefined,
       created: existing ? existing.created : undefined,
@@ -884,7 +960,8 @@
       password: form.password.value,
       url: url,
       notes: form.notes.value,
-      critical: form.critical.checked
+      critical: form.critical.checked,
+      totp: totp
     };
     Vault.put(fields).then(function () {
       closeModal();
@@ -916,6 +993,7 @@
   }
 
   function closeModal() {
+    stopTotp();
     var m = byId("record-modal");
     if (m && !m.hidden) {
       m.hidden = true;
@@ -1116,6 +1194,13 @@
       if (href) window.open(href, "_blank", "noopener,noreferrer");
       return;
     }
+    var copyTotp = e.target.closest("[data-copy-totp]");
+    if (copyTotp) {
+      // No clipboard wipe: the code expires on its own in <=30s, and wiping
+      // it mid-login while the user tabs over to the site is pure annoyance.
+      if (totpCode) copyValue(totpCode, false);
+      return;
+    }
     var copy = e.target.closest("[data-copy]");
     if (copy) {
       var isPw = copy.getAttribute("data-copy") === "password";
@@ -1195,6 +1280,9 @@
       var rows = [el("h2", { class: "ps-entry-title", text: e.title || "(untitled)" })];
       field(rows, "Username", e.username);
       field(rows, "Password", e.password);
+      // The base32 key, not a code: losing it locks you out even with the
+      // password, which is exactly what this sheet exists to survive.
+      field(rows, "Authenticator key", e.totp);
       field(rows, "URL", e.url);
       field(rows, "Notes", e.notes);
       sheet.appendChild(el("div", { class: "ps-entry" }, rows));
