@@ -4,6 +4,30 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Settings: token is retrievable; "remove from device" instead of uninstall (2026-08)
+
+Two related Settings calls:
+
+- **The access token has Show and Copy buttons.** It was masked with no way
+  back — but connecting a new device needs Vault ID *and* token, and Settings
+  only surfaced half. Masking the token is shoulder-surfing hygiene, not
+  secrecy: it lives in plaintext localStorage (see the credential-storage
+  entry below), and Settings is only reachable unlocked, where real passwords
+  sit behind the same reveal pattern. Copying it does NOT auto-wipe the
+  clipboard (unlike passwords): the whole point is pasting it on another
+  device, often via a cross-device clipboard minutes later.
+- **"Remove vault from this device" wipes; it cannot uninstall.** There is no
+  web API for a page to uninstall a PWA — install has one, uninstall is
+  browser chrome only. The wipe deletes what actually matters and what an
+  icon-uninstall can leave behind (on desktop Chrome, site data survives
+  uninstall unless a checkbox is ticked): the IndexedDB vault, all
+  localStorage, the service worker, and caches — then reloads into the
+  first-run gate. `localStorage.clear()` over selective key removal, on
+  purpose: decommissioning wants first-run state, and a curated key list
+  would silently rot as keys are added. The confirm dialog owns the two
+  blunt truths: unsynced changes are gone for good, and the icon must be
+  removed by hand.
+
 ## Create gate probes server auth; only a 401 blocks (2026-08)
 
 Creating a vault on a token-protected server used to succeed locally and

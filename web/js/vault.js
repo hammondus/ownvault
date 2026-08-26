@@ -533,6 +533,29 @@ window.Vault = (function () {
     writeAuth = null;
   }
 
+  // Decommission this device: forget the keys, close the DB connection, and
+  // delete the whole database. The caller clears localStorage and reloads —
+  // there is no coming back except connect/restore. Resolves on onblocked too
+  // (another tab holding the DB open defers the delete until that tab closes;
+  // waiting here would hang the wipe behind a tab the user can't see).
+  function wipeLocal() {
+    lock();
+    if (db) {
+      try {
+        db.close();
+      } catch (e) {
+        /* ignore */
+      }
+      db = null;
+    }
+    return new Promise(function (resolve) {
+      var req = window.indexedDB.deleteDatabase(DB_NAME);
+      req.onsuccess = req.onerror = req.onblocked = function () {
+        resolve();
+      };
+    });
+  }
+
   // "" while locked — sync.js skips pushing then (pushes rerun on unlock).
   function getWriteAuth() {
     return writeAuth || "";
@@ -1462,6 +1485,7 @@ window.Vault = (function () {
     create: create,
     unlock: unlock,
     lock: lock,
+    wipeLocal: wipeLocal,
     getWriteAuth: getWriteAuth,
     changePassword: changePassword,
     reencrypt: reencrypt,

@@ -1369,6 +1369,63 @@
     show(m, true);
   }
 
+  // Settings "Remove from this device": wipe everything this origin holds —
+  // IndexedDB vault, all localStorage (sync config, vault name, UI prefs),
+  // service worker + caches — then reload into the first-run gate. This is the
+  // buildable half of "uninstall": no web API can remove the installed icon,
+  // but the icon without the data is an empty shell.
+  function removeFromDevice() {
+    confirmDialog({
+      title: "Remove vault from this device?",
+      message:
+        "The vault and all settings are deleted from this browser only. " +
+        "Unsynced changes are lost for good. The app icon stays until you " +
+        "remove it from your browser or home screen.",
+      confirmText: "Remove",
+      danger: true
+    }).then(function (ok) {
+      if (!ok) return;
+      if (window.Sync) Sync.stop();
+      Vault.wipeLocal()
+        .then(function () {
+          try {
+            localStorage.clear();
+          } catch (e) {
+            /* ignore */
+          }
+          var jobs = [];
+          if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+            jobs.push(
+              navigator.serviceWorker.getRegistrations().then(function (regs) {
+                return Promise.all(
+                  regs.map(function (r) {
+                    return r.unregister();
+                  })
+                );
+              })
+            );
+          }
+          if (window.caches) {
+            jobs.push(
+              caches.keys().then(function (keys) {
+                return Promise.all(
+                  keys.map(function (k) {
+                    return caches.delete(k);
+                  })
+                );
+              })
+            );
+          }
+          // Best effort on SW/caches: even if one fails, the vault and config
+          // are already gone, so always land back on the fresh gate.
+          return Promise.all(jobs).catch(function () {});
+        })
+        .then(function () {
+          location.reload();
+        });
+    });
+  }
+
   document.body.addEventListener("click", function (e) {
     if (e.target.closest("#lock-btn")) {
       lockNow();
@@ -1380,6 +1437,24 @@
     }
     if (e.target.closest("#vault-id-copy")) {
       if (window.Sync) copyValue(Sync.getVaultId(), false);
+      return;
+    }
+    if (e.target.closest("#sync-token-reveal")) {
+      var tokEl = byId("sync-token");
+      var showing = tokEl.type === "text";
+      tokEl.type = showing ? "password" : "text";
+      e.target.closest("#sync-token-reveal").textContent = showing ? "Show" : "Hide";
+      return;
+    }
+    // No clipboard wipe: the token gets pasted on another device (possibly via
+    // a cross-device clipboard, minutes later), and it's already plaintext in
+    // localStorage — the wipe would cost the transfer more than it protects.
+    if (e.target.closest("#sync-token-copy")) {
+      if (window.Sync) copyValue(Sync.getToken(), false);
+      return;
+    }
+    if (e.target.closest("#wipe-device")) {
+      removeFromDevice();
       return;
     }
     if (e.target.closest("#recovery-print")) {

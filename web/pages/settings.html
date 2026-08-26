@@ -80,11 +80,15 @@
       <span>Enable sync</span>
       <input id="sync-enable" type="checkbox">
     </label>
-    <label class="form-row">
+    <div class="form-row">
       <span class="form-label">Access token (only if your server requires one)</span>
-      <input id="sync-token" class="form-input" type="password" autocomplete="off"
-             placeholder="leave blank for local / LAN">
-    </label>
+      <div class="sync-row">
+        <input id="sync-token" class="form-input" type="password" autocomplete="off"
+               placeholder="leave blank for local / LAN">
+        <button id="sync-token-reveal" class="btn" type="button">Show</button>
+        <button id="sync-token-copy" class="btn" type="button">Copy</button>
+      </div>
+    </div>
     <div class="form-row">
       <span class="form-label">Vault ID — enter this on another device to sync it
         to this vault</span>
@@ -179,5 +183,17 @@
       </select>
     </label>
     <button id="reset-btn" class="btn btn-ghost" type="button">Reset menu button position</button>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">Remove from this device</h2>
+    <p class="card-note">Deletes the vault and all app settings from this
+      browser, returning it to a first-run state. Only this device is affected —
+      the server's copy (if you sync) and your other devices keep everything.</p>
+    <p class="card-note card-warn">⚠️ If this vault doesn't sync, or has unsynced
+      changes, they are gone for good — sync or export a backup first. The
+      installed app icon can't remove itself; delete it from your browser or
+      home screen afterwards.</p>
+    <button id="wipe-device" class="btn btn-danger" type="button">Remove vault from this device…</button>
   </div>
 </section>
