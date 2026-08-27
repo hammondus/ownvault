@@ -138,6 +138,24 @@
     return document.getElementById(id);
   }
 
+  // iOS WebKit doesn't repaint existing glyphs when -webkit-text-security
+  // changes: a revealed field keeps showing dots while characters typed
+  // *after* the toggle render correctly (desktop WebKit and Chromium repaint
+  // fine). Rewriting the content forces a fresh text layout. For an input the
+  // caret lands at the end, which is fine for a reveal tap. Call after every
+  // masked-class toggle.
+  function forceTextRepaint(node) {
+    if (node.tagName === "INPUT" || node.tagName === "TEXTAREA") {
+      var v = node.value;
+      node.value = "";
+      node.value = v;
+    } else {
+      var t = node.textContent;
+      node.textContent = "";
+      node.textContent = t;
+    }
+  }
+
   function show(node, on) {
     if (node) node.hidden = !on;
   }
@@ -1523,6 +1541,7 @@
       if (inp) {
         var showNow = inp.classList.contains("masked");
         inp.classList.toggle("masked", !showNow);
+        forceTextRepaint(inp);
         revealInput.textContent = showNow ? "🙈" : "👁";
         revealInput.setAttribute(
           "aria-label",
@@ -1541,6 +1560,7 @@
         span.classList.add("masked");
         reveal.textContent = "👁";
       }
+      forceTextRepaint(span);
       return;
     }
     var openBtn = e.target.closest("[data-open]");
@@ -1575,6 +1595,10 @@
     if (rcReveal) {
       var sec = byId("rc-section");
       var revealed = sec.classList.toggle("rc-revealed");
+      var rcCodes = sec.querySelectorAll(".rc-code");
+      for (var rcn = 0; rcn < rcCodes.length; rcn++) {
+        forceTextRepaint(rcCodes[rcn]);
+      }
       rcReveal.textContent = revealed ? "🙈" : "👁";
       rcReveal.setAttribute(
         "aria-label",
