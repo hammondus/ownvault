@@ -195,13 +195,13 @@
     </div>
   </div>
 
-  <!-- In-page QR scanner for the connect screen (vaultui.js startScan).
-       playsinline is required or iOS hijacks the stream into a fullscreen
-       video player. -->
+  <!-- In-page QR scanner, shared by the connect screen (setup codes) and the
+       entry edit form (2FA enrolment QRs) — vaultui.js startScan sets the
+       hint per caller. playsinline is required or iOS hijacks the stream
+       into a fullscreen video player. -->
   <div id="scan-overlay" class="scan-overlay" hidden>
     <video id="scan-video" playsinline muted></video>
-    <p class="scan-hint">Point the camera at the setup code QR on your other
-      device (Settings &rarr; Sync).</p>
+    <p id="scan-hint" class="scan-hint"></p>
     <button id="scan-cancel" class="btn" type="button">Cancel</button>
   </div>
 

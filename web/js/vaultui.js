@@ -206,7 +206,7 @@
     show(byId("unlock-error"), false);
     show(byId("connect-error"), false);
     show(byId("restore-msg"), false);
-    stopScan(); // leaving the connect step mid-scan must release the camera
+    stopScan(); // reaching the gate mid-scan (connect or 2FA) must release the camera
     show(
       byId("connect-scan"),
       mode === "connect" &&
@@ -264,11 +264,13 @@
     show(byId("lock-screen"), false);
   }
 
-  /* ==================== QR scanner (connect screen) ==================== */
-  // In-page scanning, because the OS camera app treats a scanned QR as a
-  // search (and on iOS a QR link opens Safari — a different storage container
-  // than the installed app). Safari has no BarcodeDetector, so decoding is
-  // the vendored jsQR (loaded on first use — 127 KB nobody else pays for).
+  /* ==================== QR scanner ==================== */
+  // One shared in-page scanner with two callers: the connect screen (setup
+  // codes) and the entry edit form (a site's otpauth:// 2FA QR). In-page,
+  // because the OS camera app treats a scanned QR as a search (and on iOS a
+  // QR link opens Safari — a different storage container than the installed
+  // app). Safari has no BarcodeDetector, so decoding is the vendored jsQR
+  // (loaded on first use — 127 KB nobody else pays for).
 
   var scanStream = null;
   var scanTimer = null;
@@ -306,9 +308,10 @@
     show(byId("scan-overlay"), false);
   }
 
-  function startScan() {
-    var err = byId("connect-error");
-    show(err, false);
+  // opts: { hint, onCode(text) -> truthy once handled (stops the scan;
+  // falsy = not our QR, keep looking), onError(msg) }.
+  function startScan(opts) {
+    byId("scan-hint").textContent = opts.hint;
     loadJsQR()
       .then(function () {
         return navigator.mediaDevices.getUserMedia({
@@ -333,23 +336,63 @@
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
           var hit = window.jsQR(img.data, img.width, img.height);
-          if (hit && Sync.parseSetupCode(hit.data)) {
-            stopScan();
-            byId("connect-id").value = hit.data.trim();
-            // Straight into the connect attempt — the whole point of the scan
-            // is not having to touch anything else.
-            handleConnect({ preventDefault: function () {} });
-          }
+          if (hit && opts.onCode(hit.data)) stopScan();
         }, 200);
       })
       .catch(function (e) {
         stopScan();
-        err.textContent =
+        opts.onError(
           e && e.name === "NotAllowedError"
-            ? "Camera access was refused. Allow it in your browser settings, or paste the setup code instead."
-            : "Couldn't start the camera — paste the setup code instead.";
-        show(err, true);
+            ? "Camera access was refused. Allow it in your browser settings."
+            : "Couldn't start the camera."
+        );
       });
+  }
+
+  function startConnectScan() {
+    var err = byId("connect-error");
+    show(err, false);
+    startScan({
+      hint:
+        "Point the camera at the setup code QR on your other device " +
+        "(Settings → Sync).",
+      onCode: function (text) {
+        if (!Sync.parseSetupCode(text)) return false;
+        byId("connect-id").value = text.trim();
+        // Straight into the connect attempt — the whole point of the scan
+        // is not having to touch anything else.
+        handleConnect({ preventDefault: function () {} });
+        return true;
+      },
+      onError: function (msg) {
+        err.textContent = msg + " Paste the setup code instead.";
+        show(err, true);
+      }
+    });
+  }
+
+  // The edit form's "scan" button: read a site's 2FA enrolment QR straight
+  // into the authenticator-key field. Non-otpauth QRs are ignored (keep
+  // scanning — the camera may just not be aimed yet), but an otpauth URI the
+  // vault can't store (HOTP, non-default parameters) ends the scan with the
+  // normalize error: the user aimed at the right code, so silence would read
+  // as a broken scanner.
+  function startTotpScan() {
+    startScan({
+      hint: "Point the camera at the site's 2FA QR code.",
+      onCode: function (text) {
+        if (!/^otpauth:/i.test(text)) return false;
+        var form = byId("record-form");
+        if (!form) return true; // modal gone (auto-lock) — drop the secret
+        try {
+          form.totp.value = Totp.normalize(text);
+        } catch (e) {
+          toast(e.message);
+        }
+        return true;
+      },
+      onError: toast
+    });
   }
 
   function startGate() {
@@ -999,6 +1042,23 @@
     ]);
   }
 
+  // The authenticator field is a maskedField plus, when a camera exists, a
+  // scan link (handled by delegation on the modal — see data-scan-totp).
+  function totpField(value) {
+    var row = maskedField("totp", "Authenticator key (2FA)", value);
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      row.appendChild(
+        el("button", {
+          class: "form-scan-link",
+          type: "button",
+          "data-scan-totp": "1",
+          text: "Scan the site's QR code with the camera"
+        })
+      );
+    }
+    return row;
+  }
+
   function openModalEdit(entry) {
     entry = entry || {};
     var card = byId("modal-card");
@@ -1047,11 +1107,10 @@
       inputField("title", "Title", entry.title, "text"),
       inputField("username", "Username", entry.username, "text"),
       maskedField("password", "Password", entry.password),
-      // The site's 2FA setup key: bare base32 or a pasted otpauth:// link
-      // (Totp.normalize sorts it out on save). No QR scanning — every site
-      // shows the key as text, and a camera + decoder dependency fails the
-      // stdlib test.
-      maskedField("totp", "Authenticator key (2FA)", entry.totp),
+      // The site's 2FA setup key: bare base32, a pasted otpauth:// link
+      // (Totp.normalize sorts it out on save), or — where a camera exists —
+      // scanned from the site's enrolment QR via the shared scanner.
+      totpField(entry.totp),
       // Pre-fill the scheme on new entries to save typing; a bare scheme is
       // treated as empty on save.
       inputField("url", "URL", entry.id ? entry.url : entry.url || "https://", "url"),
@@ -1354,6 +1413,11 @@
       if (href) window.open(href, "_blank", "noopener,noreferrer");
       return;
     }
+    var scanTotp = e.target.closest("[data-scan-totp]");
+    if (scanTotp) {
+      startTotpScan();
+      return;
+    }
     var copyTotp = e.target.closest("[data-copy-totp]");
     if (copyTotp) {
       // No clipboard wipe: the code expires on its own in <=30s, and wiping
@@ -1380,7 +1444,7 @@
   byId("connect-form").addEventListener("submit", handleConnect);
   byId("connect-create").addEventListener("click", handleConnectCreate);
   byId("connect-offline").addEventListener("click", handleConnectOffline);
-  byId("connect-scan").addEventListener("click", startScan);
+  byId("connect-scan").addEventListener("click", startConnectScan);
   byId("scan-cancel").addEventListener("click", stopScan);
   byId("create-restore").addEventListener("click", openRestore);
   byId("connect-restore").addEventListener("click", openRestore);

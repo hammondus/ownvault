@@ -271,8 +271,16 @@ Choices inside that:
   separate DOM-free module (not vault.js) so the future extension can import
   it, and it omits the server-side halves (replay tracking, recovery codes) —
   a generator has no replay to prevent.
-- **No QR scanning**: every enrolment screen also shows the key as text;
-  camera plus a QR-decode library fails the dependency test.
+- **QR scanning reuses the connect scanner** (2026-08; originally rejected as
+  "camera plus a QR-decode library fails the dependency test"). The setup-code
+  work later vendored jsQR and built the camera overlay anyway, so the
+  marginal cost of a scan button on the edit form dropped to a callback:
+  `startScan` takes a per-caller `{hint, onCode, onError}` and the 2FA caller
+  accepts only `otpauth:` payloads (any other QR is ignored and scanning
+  continues; an otpauth URI that `Totp.normalize` rejects stops the scan and
+  surfaces the error — the user aimed at the right code, so silence would
+  read as a broken scanner). Every enrolment screen still shows the key as
+  text, so typing it remains the camera-less fallback.
 - **Copying a code skips the clipboard wipe** the password copy gets: it
   expires on its own within 30 s, and wiping mid-login is pure annoyance.
 - **Search excludes the key**: matching against base32 noise only produces

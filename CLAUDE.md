@@ -198,8 +198,11 @@ The following data will be kept for each password entry
   no 2FA. `web/js/totp.js` (DOM-free, like vault.js) validates it on save
   (`Totp.normalize`, which also accepts a pasted `otpauth://` URI and rejects
   non-default parameters) and generates the live code in the record modal
-  (`Totp.code`, WebCrypto HMAC — no dependency). Excluded from search. See
-  DESIGN-DECISIONS.md for the one-factor trade-off.
+  (`Totp.code`, WebCrypto HMAC — no dependency). The edit form can also fill
+  the field by scanning the site's enrolment QR: `vaultui.js` `startScan` is
+  shared between the connect screen and this (per-caller `{hint, onCode,
+  onError}`), and the 2FA caller accepts only `otpauth:` payloads. Excluded
+  from search. See DESIGN-DECISIONS.md for the one-factor trade-off.
 
 These fields are the *encrypted payload* — they live inside each entry's
 ciphertext as a JSON object (JSON, not fixed columns, so future fields like a

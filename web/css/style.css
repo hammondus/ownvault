@@ -945,7 +945,22 @@ textarea.form-input {
   image-rendering: pixelated; /* keep module edges crisp when scaled */
 }
 
-/* Fullscreen in-page QR scanner (connect screen). Above the lock screen. */
+/* Scan link under the edit form's authenticator field: same link-button
+   shape as .lock-link, recoloured for the light modal card. */
+.form-scan-link {
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Fullscreen in-page QR scanner (connect screen + 2FA enrolment).
+   Above the lock screen. */
 /* display:flex below would override the [hidden] attribute, so restore it. */
 .scan-overlay[hidden] {
   display: none;
