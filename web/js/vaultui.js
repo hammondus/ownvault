@@ -766,7 +766,9 @@
   function matches(entry, term) {
     if (!term) return true;
     // Per spec: search spans every field, including password and notes, even
-    // though only title/username/url are displayed.
+    // though only title/username/url are displayed. The authenticator key and
+    // recovery codes stay out: matching against base32/code noise only
+    // produces baffling results.
     var hay = [
       entry.title,
       entry.username,
@@ -936,12 +938,94 @@
     ]);
   }
 
+  // The entry the view modal is showing. Recovery-code tick-offs mutate this
+  // object and put() the result, so rapid ticks accumulate on one base even
+  // before loadEntries refreshes the entries array.
+  var viewEntry = null;
+
+  // Recovery codes: masked as a block until the section's reveal toggle is
+  // pressed; each code has a tick-off checkbox (used codes render struck
+  // through) and its own copy button. Ticking is a genuine edit — the entry
+  // re-encrypts and syncs like any other change.
+  function recoverySection(entry) {
+    var codes = entry.recovery || [];
+    if (!codes.length) return null;
+    var rows = codes.map(function (r, i) {
+      var box = el("input", {
+        type: "checkbox",
+        class: "form-check-input",
+        "data-rc-toggle": String(i),
+        "aria-label": "Mark recovery code as used"
+      });
+      box.checked = !!r.used;
+      return el("div", { class: "rc-row" + (r.used ? " rc-row-used" : "") }, [
+        box,
+        el("span", { class: "rc-code", text: r.code }),
+        el("button", {
+          class: "icon-btn",
+          type: "button",
+          "data-rc-copy": String(i),
+          "aria-label": "Copy recovery code",
+          text: "⧉"
+        })
+      ]);
+    });
+    return el("div", { class: "field", id: "rc-section" }, [
+      el("div", { class: "field-label rc-head" }, [
+        el("span", { class: "rc-count", text: rcCountText(codes) }),
+        el("button", {
+          class: "icon-btn",
+          type: "button",
+          "data-rc-reveal": "1",
+          "aria-label": "Show recovery codes",
+          text: "👁"
+        })
+      ]),
+      el("div", { class: "rc-list" }, rows)
+    ]);
+  }
+
+  function rcCountText(codes) {
+    var left = codes.filter(function (r) {
+      return !r.used;
+    }).length;
+    return "Recovery codes — " + left + " of " + codes.length + " unused";
+  }
+
+  function toggleRecoveryUsed(i, box) {
+    if (!viewEntry || !viewEntry.recovery || !viewEntry.recovery[i]) return;
+    viewEntry.recovery[i].used = box.checked;
+    box.closest(".rc-row").classList.toggle("rc-row-used", box.checked);
+    var count = byId("modal-card").querySelector(".rc-count");
+    if (count) count.textContent = rcCountText(viewEntry.recovery);
+    Vault.put(entryFields(viewEntry));
+  }
+
+  // The full payload rebuilt from a decrypted entry, for writes made outside
+  // the edit form (recovery tick-offs). Must list every payload field: put()
+  // drops anything missing.
+  function entryFields(e) {
+    return {
+      id: e.id,
+      created: e.created,
+      title: e.title,
+      username: e.username,
+      password: e.password,
+      url: e.url,
+      notes: e.notes,
+      critical: e.critical,
+      totp: e.totp,
+      recovery: e.recovery
+    };
+  }
+
   function openModalView(entry) {
     var card = byId("modal-card");
     card.innerHTML = "";
     stopTotp(); // switching entries must not leave the old entry's timer running
     card.dataset.mode = "view";
     card.dataset.id = entry.id;
+    viewEntry = entry;
 
     var when =
       "Modified " + new Date(entry.modified || entry.updatedAt).toLocaleString();
@@ -967,6 +1051,7 @@
       entry.username ? copyRow("Username", entry.username, "text") : null,
       entry.password ? copyRow("Password", entry.password, "password") : null,
       entry.totp ? totpRow(entry.totp) : null,
+      recoverySection(entry),
       entry.url ? copyRow("URL", entry.url, "url") : null,
       textField("Notes", entry.notes),
       el("div", { class: "field-when", text: when })
@@ -1042,6 +1127,38 @@
     ]);
   }
 
+  // Recovery codes edit as plain lines, one code per line. Used/unused state
+  // isn't shown or edited here; saveFromForm carries each code's used flag
+  // across by exact string match, so editing the list never resets ticks.
+  function recoveryEditField(codes) {
+    var ta = el("textarea", {
+      class: "form-input masked",
+      name: "recovery",
+      rows: "4",
+      autocomplete: "off",
+      spellcheck: "false",
+      autocorrect: "off",
+      autocapitalize: "off",
+      placeholder: "One code per line"
+    });
+    ta.value = (codes || [])
+      .map(function (r) {
+        return r.code;
+      })
+      .join("\n");
+    var toggle = el("button", {
+      class: "icon-btn",
+      type: "button",
+      "data-reveal-input": "1",
+      "aria-label": "Show recovery codes",
+      text: "👁"
+    });
+    return el("div", { class: "form-row" }, [
+      el("span", { class: "form-label", text: "Recovery codes (2FA)" }),
+      el("div", { class: "sync-row" }, [ta, toggle])
+    ]);
+  }
+
   // The authenticator field is a maskedField plus, when a camera exists, a
   // scan link (handled by delegation on the modal — see data-scan-totp).
   function totpField(value) {
@@ -1111,6 +1228,7 @@
       // (Totp.normalize sorts it out on save), or — where a camera exists —
       // scanned from the site's enrolment QR via the shared scanner.
       totpField(entry.totp),
+      recoveryEditField(entry.recovery),
       // Pre-fill the scheme on new entries to save typing; a bare scheme is
       // treated as empty on save.
       inputField("url", "URL", entry.id ? entry.url : entry.url || "https://", "url"),
@@ -1167,6 +1285,22 @@
       toast(err.message);
       return;
     }
+    // Recovery codes: one per line. Each code's used flag survives the edit
+    // by exact string match against the previous list; new codes start
+    // unused, removed lines drop their flag with them.
+    var prevRec = (existing && existing.recovery) || [];
+    var recovery = form.recovery.value
+      .split("\n")
+      .map(function (s) {
+        return s.trim();
+      })
+      .filter(Boolean)
+      .map(function (code) {
+        var prev = prevRec.filter(function (r) {
+          return r.code === code;
+        })[0];
+        return { code: code, used: !!(prev && prev.used) };
+      });
     var fields = {
       id: id || undefined,
       created: existing ? existing.created : undefined,
@@ -1176,7 +1310,8 @@
       url: url,
       notes: form.notes.value,
       critical: form.critical.checked,
-      totp: totp
+      totp: totp,
+      recovery: recovery
     };
     Vault.put(fields).then(function () {
       closeModal();
@@ -1209,6 +1344,7 @@
 
   function closeModal() {
     stopTotp();
+    viewEntry = null;
     var m = byId("record-modal");
     if (m && !m.hidden) {
       m.hidden = true;
@@ -1258,12 +1394,14 @@
 
   /* ==================== clipboard ==================== */
 
-  function copyValue(value, isPassword) {
+  // wipe: overwrite the clipboard after the configured delay (passwords and
+  // recovery codes — long-lived secrets; TOTP codes expire on their own).
+  function copyValue(value, wipe, label) {
     if (!navigator.clipboard) return;
     navigator.clipboard.writeText(value).then(function () {
       var ms = clipClearMs();
-      if (isPassword && ms > 0) {
-        toast("Password copied — clears in " + ms / 1000 + "s");
+      if (wipe && ms > 0) {
+        toast((label || "Password") + " copied — clears in " + ms / 1000 + "s");
         clearTimeout(clipTimer);
         clipTimer = setTimeout(function () {
           // Best effort: overwrite the clipboard so a copied secret doesn't
@@ -1381,7 +1519,7 @@
     // Edit-form password visibility toggle (flips the CSS mask).
     var revealInput = e.target.closest("[data-reveal-input]");
     if (revealInput) {
-      var inp = revealInput.parentNode.querySelector("input");
+      var inp = revealInput.parentNode.querySelector("input, textarea");
       if (inp) {
         var showNow = inp.classList.contains("masked");
         inp.classList.toggle("masked", !showNow);
@@ -1416,6 +1554,32 @@
     var scanTotp = e.target.closest("[data-scan-totp]");
     if (scanTotp) {
       startTotpScan();
+      return;
+    }
+    var rcToggle = e.target.closest("[data-rc-toggle]");
+    if (rcToggle) {
+      toggleRecoveryUsed(parseInt(rcToggle.getAttribute("data-rc-toggle"), 10), rcToggle);
+      return;
+    }
+    var rcCopy = e.target.closest("[data-rc-copy]");
+    if (rcCopy) {
+      var rci = parseInt(rcCopy.getAttribute("data-rc-copy"), 10);
+      if (viewEntry && viewEntry.recovery && viewEntry.recovery[rci]) {
+        // Wipe like a password: unlike a TOTP code, a recovery code doesn't
+        // expire on its own.
+        copyValue(viewEntry.recovery[rci].code, true, "Recovery code");
+      }
+      return;
+    }
+    var rcReveal = e.target.closest("[data-rc-reveal]");
+    if (rcReveal) {
+      var sec = byId("rc-section");
+      var revealed = sec.classList.toggle("rc-revealed");
+      rcReveal.textContent = revealed ? "🙈" : "👁";
+      rcReveal.setAttribute(
+        "aria-label",
+        revealed ? "Hide recovery codes" : "Show recovery codes"
+      );
       return;
     }
     var copyTotp = e.target.closest("[data-copy-totp]");
@@ -1509,6 +1673,19 @@
       // The base32 key, not a code: losing it locks you out even with the
       // password, which is exactly what this sheet exists to survive.
       field(rows, "Authenticator key", e.totp);
+      if (e.recovery && e.recovery.length) {
+        // All codes, with used ones marked — on paper a code crossed off in
+        // the app is still legible, and the mark says why it may not work.
+        field(
+          rows,
+          "Recovery codes",
+          e.recovery
+            .map(function (r) {
+              return r.code + (r.used ? "  (used)" : "");
+            })
+            .join("\n")
+        );
+      }
       field(rows, "URL", e.url);
       field(rows, "Notes", e.notes);
       sheet.appendChild(el("div", { class: "ps-entry" }, rows));

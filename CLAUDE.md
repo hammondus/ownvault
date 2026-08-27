@@ -203,6 +203,14 @@ The following data will be kept for each password entry
   shared between the connect screen and this (per-caller `{hint, onCode,
   onError}`), and the 2FA caller accepts only `otpauth:` payloads. Excluded
   from search. See DESIGN-DECISIONS.md for the one-factor trade-off.
+- `recovery` — the site's 2FA recovery codes as `[{code, used}]`. Optional;
+  empty/absent when the entry has none. Edited as one code per line (a
+  masked textarea); each code's `used` flag is set by tick-off checkboxes in
+  the record modal (a genuine edit — re-encrypts and syncs) and survives
+  list edits by exact string match in `saveFromForm`. Excluded from search;
+  per-code copy gets the password-style clipboard wipe (recovery codes are
+  long-lived, unlike TOTP codes); critical entries print them on the
+  emergency recovery sheet with used ones marked.
 
 These fields are the *encrypted payload* — they live inside each entry's
 ciphertext as a JSON object (JSON, not fixed columns, so future fields like a
@@ -240,6 +248,12 @@ code immediately on resume, and the interval is killed on modal close, entry
 switch, edit, and lock (the closure holds the secret, so it must never
 outlive the modal's plaintext). Critical entries print their authenticator
 key on the emergency recovery sheet.
+
+If the entry has recovery codes (`recovery` field), the modal shows a
+**Recovery codes** section: an unused count, a reveal toggle (codes are
+masked as a block against shoulder surfing), and one row per code with a
+tick-off checkbox, the monospace code, and a copy icon. Ticking a code marks
+it used (struck through) and saves the entry.
 
 **Critical entries + emergency recovery sheet.** The add/edit form has a
 "Critical" checkbox (stored as the `critical` payload field); such entries show

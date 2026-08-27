@@ -18,8 +18,8 @@
  *   - meta store: the wrapped-key record under key "vault".
  *   - entries store: envelopes {id, iv, ciphertext, updatedAt, deleted}.
  *     ciphertext decrypts to the payload {title, username, password, url,
- *     notes, critical, totp, created, modified}. Deletes are tombstones
- *     (deleted=true, payload dropped) so they can sync later.
+ *     notes, critical, totp, recovery, created, modified}. Deletes are
+ *     tombstones (deleted=true, payload dropped) so they can sync later.
  */
 window.Vault = (function () {
   "use strict";
@@ -654,6 +654,16 @@ window.Vault = (function () {
       // turns it into the live code via totp.js. Encrypted payload like
       // everything else — the server can't tell which entries have 2FA.
       totp: fields.totp || "",
+      // The site's 2FA recovery codes, each with a tick-off flag. Coerced to
+      // shape here so a malformed backup/import can't smuggle richer objects
+      // into the payload.
+      recovery: (fields.recovery || [])
+        .map(function (r) {
+          return { code: String((r && r.code) || ""), used: !!(r && r.used) };
+        })
+        .filter(function (r) {
+          return r.code;
+        }),
       created: fields.created || now,
       modified: now
     };

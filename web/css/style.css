@@ -945,6 +945,44 @@ textarea.form-input {
   image-rendering: pixelated; /* keep module edges crisp when scaled */
 }
 
+/* Recovery codes (record modal): tick-off rows. Codes are masked as a block
+   until the section header's reveal toggle sets .rc-revealed. */
+.rc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rc-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rc-code {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
+#rc-section.rc-revealed .rc-code {
+  -webkit-text-security: none;
+  text-security: none;
+}
+
+.rc-row-used .rc-code {
+  text-decoration: line-through;
+  color: #8a94a0;
+}
+
 /* Scan link under the edit form's authenticator field: same link-button
    shape as .lock-link, recoloured for the light modal card. */
 .form-scan-link {

@@ -283,6 +283,19 @@ Choices inside that:
   text, so typing it remains the camera-less fallback.
 - **Copying a code skips the clipboard wipe** the password copy gets: it
   expires on its own within 30 s, and wiping mid-login is pure annoyance.
+- **Recovery codes live in the vault too** (2026-08, `recovery` payload
+  field): the same one-factor reasoning covers them — for an entry that
+  already stores its TOTP secret they add nothing to an attacker's position,
+  and for most users the alternative is a plaintext `recovery-codes.txt` in
+  Downloads. The availability question ("codes recover you when the
+  authenticator is lost — what if the vault is the authenticator?") is
+  answered by the emergency recovery sheet: critical entries print their
+  codes, used ones marked. Format is `[{code, used}]`, not free text, so
+  tick-off state is structured and survives edits (matched by exact code
+  string, so re-pasting or pruning the list never resets ticks). Excluded
+  from search like the TOTP key; per-code copy takes the password-style
+  clipboard wipe because — unlike a TOTP code — a recovery code stays valid
+  until used.
 - **Search excludes the key**: matching against base32 noise only produces
   false hits.
 - **Caveat**: codes come from the device clock; drift past ~30–60 s produces
