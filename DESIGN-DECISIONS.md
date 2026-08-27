@@ -108,9 +108,19 @@ The connect screen's ID field accepts either form. Design points:
   with auth headers and shows it via a blob object URL (a plain `<img src>`
   can't send headers), which is why CSP `img-src` gained `blob:`. The QR is
   rendered on demand and torn down on toggle, fragment swap, and lock.
-- **A magic link (`https://server/#connect=...`) was rejected**: the
-  fragment stays off the wire, but the URL — token included — lands in the
-  new device's browser history and autocomplete.
+- **The QR encodes the setup *link*** (`https://server/#ov1...`), and the
+  connect screen has an **in-page scanner** (vendored jsQR, Apache-2.0,
+  loaded on first use — Safari has no BarcodeDetector). The scanner is the
+  primary flow: the OS camera app treats plain text as a search query, and
+  on iOS a scanned link opens Safari — a different storage container than
+  the installed app, so it bootstraps the wrong copy. The link form exists
+  so the bare-camera path still lands somewhere useful: the app prefills
+  the connect field from the fragment (never auto-connects — page loads
+  shouldn't have side effects) and strips it with `replaceState` in every
+  gate mode, so the token doesn't linger in the address bar or history
+  entry. A magic link as the *only* mechanism was rejected for exactly that
+  history exposure; as a fallback behind the scanner, with stripping, the
+  trade is worth it.
 
 ## Settings: token is retrievable; "remove from device" instead of uninstall (2026-08)
 

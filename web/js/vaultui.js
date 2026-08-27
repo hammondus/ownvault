@@ -206,6 +206,12 @@
     show(byId("unlock-error"), false);
     show(byId("connect-error"), false);
     show(byId("restore-msg"), false);
+    stopScan(); // leaving the connect step mid-scan must release the camera
+    show(
+      byId("connect-scan"),
+      mode === "connect" &&
+        !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+    );
     // The welcome step surfaces the freshly created vault's id (sync vaults
     // only) and offers to install the app.
     if (mode === "welcome") {
@@ -258,10 +264,99 @@
     show(byId("lock-screen"), false);
   }
 
+  /* ==================== QR scanner (connect screen) ==================== */
+  // In-page scanning, because the OS camera app treats a scanned QR as a
+  // search (and on iOS a QR link opens Safari — a different storage container
+  // than the installed app). Safari has no BarcodeDetector, so decoding is
+  // the vendored jsQR (loaded on first use — 127 KB nobody else pays for).
+
+  var scanStream = null;
+  var scanTimer = null;
+  var jsqrPromise = null;
+
+  function loadJsQR() {
+    if (window.jsQR) return Promise.resolve();
+    if (jsqrPromise) return jsqrPromise;
+    jsqrPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = "/js/jsqr.min.js";
+      s.onload = function () {
+        resolve();
+      };
+      s.onerror = function () {
+        jsqrPromise = null;
+        reject(new Error("jsQR failed to load"));
+      };
+      document.head.appendChild(s);
+    });
+    return jsqrPromise;
+  }
+
+  function stopScan() {
+    clearInterval(scanTimer);
+    scanTimer = null;
+    if (scanStream) {
+      scanStream.getTracks().forEach(function (t) {
+        t.stop();
+      });
+      scanStream = null;
+    }
+    var v = byId("scan-video");
+    if (v) v.srcObject = null;
+    show(byId("scan-overlay"), false);
+  }
+
+  function startScan() {
+    var err = byId("connect-error");
+    show(err, false);
+    loadJsQR()
+      .then(function () {
+        return navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" }
+        });
+      })
+      .then(function (stream) {
+        scanStream = stream;
+        var video = byId("scan-video");
+        video.srcObject = stream;
+        video.play();
+        show(byId("scan-overlay"), true);
+        // Decode ~5x/s from a downscaled frame — full-resolution frames make
+        // jsQR chew CPU for no extra range.
+        var canvas = document.createElement("canvas");
+        var ctx = canvas.getContext("2d", { willReadFrequently: true });
+        scanTimer = setInterval(function () {
+          if (!video.videoWidth) return; // no frame yet
+          var scale = Math.min(1, 480 / video.videoWidth);
+          canvas.width = Math.round(video.videoWidth * scale);
+          canvas.height = Math.round(video.videoHeight * scale);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          var hit = window.jsQR(img.data, img.width, img.height);
+          if (hit && Sync.parseSetupCode(hit.data)) {
+            stopScan();
+            byId("connect-id").value = hit.data.trim();
+            // Straight into the connect attempt — the whole point of the scan
+            // is not having to touch anything else.
+            handleConnect({ preventDefault: function () {} });
+          }
+        }, 200);
+      })
+      .catch(function (e) {
+        stopScan();
+        err.textContent =
+          e && e.name === "NotAllowedError"
+            ? "Camera access was refused. Allow it in your browser settings, or paste the setup code instead."
+            : "Couldn't start the camera — paste the setup code instead.";
+        show(err, true);
+      });
+  }
+
   function startGate() {
     Vault.isInitialized().then(function (exists) {
       if (exists) {
         showLock("unlock");
+        prefillFromHash(false); // still strip a setup link's fragment
         return;
       }
       // Fresh device. With namespacing there is no single "the vault" to find,
@@ -270,10 +365,30 @@
       // to create.
       if (window.Sync && Sync.isEnabled()) {
         showLock("connect");
+        prefillFromHash(true);
       } else {
         showLock("create");
+        prefillFromHash(false);
       }
     });
+  }
+
+  // A setup link (the QR's URL form) lands here with the code in the fragment
+  // — scanned by the OS camera app rather than the in-app scanner. Prefill
+  // only when the connect form is the active gate (fill), and never
+  // auto-connect: a page load shouldn't have side effects. The fragment is
+  // stripped in every mode — it holds the token, which must not linger in
+  // the address bar, and replaceState keeps it out of the history entry.
+  function prefillFromHash(fill) {
+    var hash = window.location.hash;
+    if (!hash || hash.length < 2) return;
+    var code = hash.slice(1);
+    if (fill && window.Sync && Sync.parseSetupCode(code)) {
+      byId("connect-id").value = code;
+    }
+    if (window.history && history.replaceState) {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
   }
 
   // Connect this device to an existing vault: store its id (+ token), then pull.
@@ -1265,6 +1380,8 @@
   byId("connect-form").addEventListener("submit", handleConnect);
   byId("connect-create").addEventListener("click", handleConnectCreate);
   byId("connect-offline").addEventListener("click", handleConnectOffline);
+  byId("connect-scan").addEventListener("click", startScan);
+  byId("scan-cancel").addEventListener("click", stopScan);
   byId("create-restore").addEventListener("click", openRestore);
   byId("connect-restore").addEventListener("click", openRestore);
   byId("restore-file").addEventListener("change", handleRestoreFile);

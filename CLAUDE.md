@@ -378,7 +378,11 @@ A fresh device joins an existing vault via the lock-screen **connect** step:
 paste the **setup code** from Settings (one string bundling Vault ID + token +
 origin, composed in `sync.js` `makeSetupCode`; also shown as a QR, rendered
 server-side by `/api/setupqr` — safe because every value in it is already
-server-known), or enter the Vault ID + token separately.
+server-known), scan that QR with the connect screen's **in-page scanner**
+(vendored `jsqr.min.js`, loaded on first use), or enter the Vault ID + token
+separately. The QR encodes the setup *link* (`origin/#code`) so an OS camera
+scan still lands in the app — the fragment prefills the connect field and is
+always stripped via `replaceState` (see DESIGN-DECISIONS.md).
 SSE `changed` events are scoped per vault (`/events?vault=<id>`); the `/events`
 reachability probe in app.js connects unscoped and just rides the keepalives.
 The old single-vault schema (entries keyed by id alone, one `meta` row) is

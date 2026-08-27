@@ -104,6 +104,8 @@
                placeholder="Access token (not needed with a setup code)" autocomplete="off">
         <p id="connect-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Connect</button>
+        <!-- Revealed by showLock only when getUserMedia exists (secure context). -->
+        <button id="connect-scan" class="lock-link" type="button" hidden>Scan setup code with the camera</button>
         <button id="connect-create" class="lock-link" type="button">Start a new vault instead</button>
         <button id="connect-restore" class="lock-link" type="button">Restore from a backup file</button>
         <button id="connect-offline" class="lock-link" type="button">Use offline only (no sync)</button>
@@ -191,6 +193,16 @@
         <button id="confirm-ok" class="btn" type="button">Confirm</button>
       </div>
     </div>
+  </div>
+
+  <!-- In-page QR scanner for the connect screen (vaultui.js startScan).
+       playsinline is required or iOS hijacks the stream into a fullscreen
+       video player. -->
+  <div id="scan-overlay" class="scan-overlay" hidden>
+    <video id="scan-video" playsinline muted></video>
+    <p class="scan-hint">Point the camera at the setup code QR on your other
+      device (Settings &rarr; Sync).</p>
+    <button id="scan-cancel" class="btn" type="button">Cancel</button>
   </div>
 
   <!-- Emergency recovery sheet: hidden on screen; the print stylesheet shows

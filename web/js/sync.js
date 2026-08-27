@@ -407,10 +407,26 @@ window.Sync = (function () {
     );
   }
 
+  // The setup code wrapped as a link: scanned by a bare camera app it opens
+  // the app with the code in the fragment (never sent to the server), instead
+  // of being handed to a search engine as opaque text. The in-app scanner and
+  // the connect field unwrap it via parseSetupCode.
+  function makeSetupLink() {
+    var origin =
+      getServerUrl() || (window.location && window.location.origin) || "";
+    return origin + "/#" + makeSetupCode();
+  }
+
   // {vaultId, token, url}, or null when str isn't a setup code (callers fall
-  // back to treating it as a bare Vault ID).
+  // back to treating it as a bare Vault ID). Accepts the bare code or the
+  // makeSetupLink URL form (pasted or scanned).
   function parseSetupCode(str) {
     str = (str || "").trim();
+    if (/^https?:\/\//i.test(str)) {
+      var h = str.indexOf("#");
+      if (h < 0) return null;
+      str = str.slice(h + 1);
+    }
     if (str.slice(0, 4) !== "ov1.") return null;
     var parts = str.slice(4).split(".");
     if (parts.length !== 3) return null;
@@ -434,7 +450,7 @@ window.Sync = (function () {
     return api("/api/setupqr", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: makeSetupCode() })
+      body: JSON.stringify({ text: makeSetupLink() })
     }).then(function (res) {
       if (!res.ok) throw new Error("qr " + res.status);
       return res.blob();
@@ -545,6 +561,7 @@ window.Sync = (function () {
     bootstrap: bootstrap,
     checkAuth: checkAuth,
     makeSetupCode: makeSetupCode,
+    makeSetupLink: makeSetupLink,
     parseSetupCode: parseSetupCode,
     fetchSetupQR: fetchSetupQR,
     start: start,

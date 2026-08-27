@@ -945,6 +945,38 @@ textarea.form-input {
   image-rendering: pixelated; /* keep module edges crisp when scaled */
 }
 
+/* Fullscreen in-page QR scanner (connect screen). Above the lock screen. */
+/* display:flex below would override the [hidden] attribute, so restore it. */
+.scan-overlay[hidden] {
+  display: none;
+}
+
+.scan-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1250; /* above the lock screen (1200) — it opens from the gate */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  background: rgba(4, 10, 22, 0.96);
+}
+
+.scan-overlay video {
+  width: min(90vw, 420px);
+  aspect-ratio: 1;
+  object-fit: cover; /* square crop — QR centring beats letterboxing here */
+  border-radius: 12px;
+}
+
+.scan-overlay .scan-hint {
+  color: #dfe7f5;
+  text-align: center;
+  max-width: 320px;
+}
+
 .sync-status {
   font-size: 0.85rem;
   color: #6b7580;
