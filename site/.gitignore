@@ -1,0 +1,12 @@
+# build output
+/ovsite
+/dist/
+
+# Playwright, installed on demand by `make shots`. A dev-only tool: the site
+# itself has no JavaScript and no dependencies.
+/node_modules/
+/package.json
+/package-lock.json
+
+# Real configuration. Only .env.example belongs in git.
+.env

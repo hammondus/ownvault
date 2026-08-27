@@ -1,0 +1,9 @@
+# The build context is site/. Keep local-only material out of the image.
+.env
+/node_modules/
+/package.json
+/package-lock.json
+/ovsite
+/dist/
+/tools/
+.DS_Store

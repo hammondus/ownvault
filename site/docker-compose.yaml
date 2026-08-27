@@ -1,0 +1,43 @@
+# The Own Vault website. Separate from the vault server's compose file at the
+# repository root, because it is a separate module with a separate release
+# cadence — a copy edit here must never restart a container people are syncing
+# vaults through.
+#
+#   make deploy       # pull, build, restart, smoke-test
+#
+# Nginx Proxy Manager terminates TLS and proxies to `ovsite:8090` on the
+# shared `blobbyboo` network. No published ports: NPM is the only way in.
+#
+# This file only runs an image; it does not build one. `make docker-build`
+# tags `ovsite:<git-sha>` and OVSITE_TAG in .env selects which tag runs, so a
+# restart on the box can never silently recompile.
+#
+# .env beside this file (see .env.example) supplies the SMTP credentials and
+# the destination address. It is git-ignored.
+
+services:
+  ovsite:
+    image: "ovsite:${OVSITE_TAG:?set OVSITE_TAG in .env — run 'make deploy'}"
+    container_name: ovsite
+    restart: unless-stopped
+    networks:
+      - blobbyboo
+    environment:
+      # Where contact form mail goes. Without it the site still serves, and
+      # the form says so rather than silently dropping messages.
+      OWNVAULT_SITE_CONTACT_TO: "${OWNVAULT_SITE_CONTACT_TO:?set OWNVAULT_SITE_CONTACT_TO in .env}"
+      # SMTP. Unset HOST means the server logs messages instead of sending
+      # them, which is the right behaviour locally and the wrong one here.
+      OWNVAULT_SITE_SMTP_HOST: "${OWNVAULT_SITE_SMTP_HOST:?set OWNVAULT_SITE_SMTP_HOST in .env}"
+      OWNVAULT_SITE_SMTP_PORT: "${OWNVAULT_SITE_SMTP_PORT:-587}"
+      OWNVAULT_SITE_SMTP_USERNAME: "${OWNVAULT_SITE_SMTP_USERNAME:-}"
+      OWNVAULT_SITE_SMTP_PASSWORD: "${OWNVAULT_SITE_SMTP_PASSWORD:-}"
+      OWNVAULT_SITE_SMTP_FROM: "${OWNVAULT_SITE_SMTP_FROM:?set OWNVAULT_SITE_SMTP_FROM in .env — must be an identity your SMTP provider has verified}"
+    # -baseurl fills the canonical and og: tags; -proxy (default) trusts the
+    # X-Forwarded-For that NPM sets, so rate limiting sees real client IPs
+    # instead of the proxy's address.
+    command: ["-addr", ":8090", "-baseurl", "${OVSITE_URL:-}"]
+
+networks:
+  blobbyboo:
+    external: true

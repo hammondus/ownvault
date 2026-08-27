@@ -1,0 +1,51 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<meta name="description" content="{{.Desc}}">
+{{if .Canon}}<link rel="canonical" href="{{.Canon}}">
+<meta property="og:url" content="{{.Canon}}">{{end}}
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{.Title}}">
+<meta property="og:description" content="{{.Desc}}">
+<meta name="theme-color" content="#0a1f3b">
+<link rel="icon" type="image/svg+xml" href="{{asset "icons/lock.svg"}}">
+<link rel="apple-touch-icon" href="{{asset "icons/apple-touch-icon.png"}}">
+<link rel="stylesheet" href="{{asset "style.css"}}">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head">
+  <div class="wrap head-inner">
+    <a class="brand" href="/">
+      <img class="brand-mark" src="{{asset "icons/lock.svg"}}" alt="" width="26" height="26">
+      <span>Own&nbsp;Vault</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/#features"{{if eq .Nav "home"}} class="here"{{end}}>Features</a>
+      <a href="/#security">Security</a>
+      <a href="/contact"{{if eq .Nav "contact"}} class="here"{{end}}>Contact</a>
+      <a class="nav-cta" href="{{.RepoURL}}">GitHub</a>
+    </nav>
+  </div>
+</header>
+{{end}}
+
+{{define "foot"}}
+<footer class="site-foot">
+  <div class="wrap foot-inner">
+    <p class="foot-brand">Own&nbsp;Vault</p>
+    <p class="foot-note">Free and open source under the MIT licence. No accounts, no telemetry, no company behind it.</p>
+    <nav class="foot-links" aria-label="Footer">
+      <a href="/">Home</a>
+      <a href="/contact">Contact</a>
+      <a href="{{.RepoURL}}">Source</a>
+      <a href="{{.RepoURL}}/issues">Issues</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>
+{{end}}

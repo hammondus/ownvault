@@ -1,0 +1,236 @@
+{{template "head" .}}
+<main id="main">
+
+<section class="hero">
+  <div class="wrap hero-inner">
+    <div class="hero-copy">
+      <p class="eyebrow">Open source · self-hosted · no accounts</p>
+      <h1>A password manager<br>you actually own.</h1>
+      <p class="lead">
+        One master password unlocks your logins. They are encrypted in your
+        browser and only ever leave it as ciphertext, so the server that syncs
+        them between your devices cannot read a single one.
+      </p>
+      <p class="hero-actions">
+        <a class="btn btn-gold" href="{{.RepoURL}}">Get it on GitHub</a>
+        <a class="btn btn-ghost" href="#how">How it works</a>
+      </p>
+      <p class="hero-sub">Install it as an app on your phone or desktop. Works fully offline. Chrome extension included.</p>
+    </div>
+    <div class="hero-shot">
+      <img src="{{asset "img/unlock.png"}}" width="700" height="872"
+           alt="The Own Vault lock screen: a gold padlock, the vault name, and a master password field.">
+    </div>
+  </div>
+</section>
+
+<section class="strip">
+  <ul class="wrap strip-list">
+    <li><strong>Encrypted in the browser</strong><span>WebCrypto, AES-GCM, Argon2id</span></li>
+    <li><strong>No accounts</strong><span>No email, no username, no sign-up</span></li>
+    <li><strong>Works offline</strong><span>Add and search with no network</span></li>
+    <li><strong>One Go binary</strong><span>No CGo, no node_modules</span></li>
+  </ul>
+</section>
+
+<section id="features" class="band">
+  <div class="wrap">
+    <h2 class="section-title">What it does</h2>
+    <p class="section-lead">
+      The parts you use daily, and the parts you hope never to need.
+    </p>
+
+    <div class="cards">
+      <article class="card">
+        <h3>Search as you type</h3>
+        <p>
+          The list narrows as you type. Search reads the notes and password
+          fields too, so an entry you only half remember still surfaces — but
+          the list itself shows only the title, username, and URL.
+        </p>
+      </article>
+      <article class="card">
+        <h3>Copy without leaving a trail</h3>
+        <p>
+          One tap copies a username, password, or URL. A copied password is
+          wiped from the clipboard automatically after about 20 seconds, and
+          you choose the delay.
+        </p>
+      </article>
+      <article class="card">
+        <h3>Two-factor codes built in</h3>
+        <p>
+          Store a site's authenticator key with its entry and the record shows
+          the live six-digit code with a countdown. One less app to open —
+          read the trade-off in <a href="{{.RepoURL}}/blob/master/DESIGN-DECISIONS.md">the design notes</a> before you use it.
+        </p>
+      </article>
+      <article class="card">
+        <h3>Sync that cannot read you</h3>
+        <p>
+          Devices sync through your own Go server. Edits on different entries
+          merge silently; when the same entry changed in two places, the app
+          shows you both versions and lets you choose.
+        </p>
+      </article>
+      <article class="card">
+        <h3>Emergency recovery sheet</h3>
+        <p>
+          Mark an entry <em>critical</em> and it goes on a printed sheet —
+          straight to the printer, never a PDF. Paper survives a dead phone, a
+          wiped laptop, and ransomware.
+        </p>
+      </article>
+      <article class="card">
+        <h3>Chrome extension</h3>
+        <p>
+          Unlock, search, copy, read a 2FA code, and fill the form on the page
+          you are looking at. It reuses the same vault code as the app, so
+          there is one implementation of the crypto, not two.
+        </p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="screens" class="band band-dark">
+  <div class="wrap">
+    <h2 class="section-title">A look at it</h2>
+    <p class="section-lead">Real screens, filled with invented logins.</p>
+    <div class="shots">
+      <figure>
+        <img src="{{asset "img/list.png"}}" width="700" height="1505" loading="lazy"
+             alt="The password list, showing eight entries with two marked critical.">
+        <figcaption>Everything, newest changes and all. Critical entries carry a badge.</figcaption>
+      </figure>
+      <figure>
+        <img src="{{asset "img/search.png"}}" width="700" height="1505" loading="lazy"
+             alt="The list narrowed to four entries after typing a search term that matches their usernames.">
+        <figcaption>Type to narrow. The search reads the username, notes, and password fields too, not just what the list shows.</figcaption>
+      </figure>
+      <figure>
+        <img src="{{asset "img/record.png"}}" width="700" height="1505" loading="lazy"
+             alt="A record showing username, masked password, a live verification code with a countdown, URL, and notes.">
+        <figcaption>One record: masked password, live 2FA code, copy buttons.</figcaption>
+      </figure>
+      <figure>
+        <img src="{{asset "img/settings.png"}}" width="700" height="1505" loading="lazy"
+             alt="Settings, showing lock controls, the clipboard clear delay, change master password, and the vault name.">
+        <figcaption>Settings: lock, clipboard delay, master password, sync.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="how" class="band">
+  <div class="wrap">
+    <h2 class="section-title">How the encryption works</h2>
+    <p class="section-lead">
+      Three sentences, because you should be able to check the claim rather
+      than trust it.
+    </p>
+    <ol class="steps">
+      <li>
+        <h3>A vault key encrypts every entry</h3>
+        <p>
+          One random AES-GCM key, generated in your browser, encrypts each
+          entry as its own record. Each ciphertext is bound to its entry's id,
+          so a hostile server cannot swap one entry's secret onto another.
+        </p>
+      </li>
+      <li>
+        <h3>Your password wraps that key</h3>
+        <p>
+          The master password goes through Argon2id — 64&nbsp;MiB of memory per
+          guess, which is what takes the advantage away from a GPU farm — and
+          the result encrypts the vault key and nothing else.
+        </p>
+      </li>
+      <li>
+        <h3>Unlocking is decrypting</h3>
+        <p>
+          Entering the password tries to unwrap the vault key. A wrong password
+          simply fails to decrypt. No password hash is stored anywhere, on your
+          device or on the server.
+        </p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section id="security" class="band band-dark">
+  <div class="wrap narrow">
+    <h2 class="section-title">What the server can and cannot see</h2>
+    <div class="split">
+      <div class="split-col">
+        <h3 class="yes">It can see</h3>
+        <ul class="ticks">
+          <li>How many entries a vault holds</li>
+          <li>When each one last changed</li>
+          <li>An opaque random Vault ID</li>
+        </ul>
+      </div>
+      <div class="split-col">
+        <h3 class="no">It cannot see</h3>
+        <ul class="ticks">
+          <li>Any title, username, password, URL, or note</li>
+          <li>Your master password, or any hash of it</li>
+          <li>The name you gave the vault</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">
+      That is why several unrelated people can share one small server without
+      trusting each other. Each vault is its own namespace, and writing to a
+      vault requires a credential derived from its key — which only unlocking
+      can produce.
+    </p>
+    <div class="warn">
+      <h3>There is no recovery</h3>
+      <p>
+        Nobody holds a spare key, because nobody can. Lose the master password
+        and the data is gone for good. Print the emergency recovery sheet, keep
+        an encrypted export somewhere safe, and treat that password as the one
+        thing you must not forget.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="run" class="band">
+  <div class="wrap narrow">
+    <h2 class="section-title">Run it yourself</h2>
+    <p class="section-lead">
+      One binary serves the app and stores the ciphertext in SQLite. Run it on
+      your laptop, on a small VM, or on someone else's server — it cannot read
+      your vault either way.
+    </p>
+    <pre class="code"><code>git clone {{.RepoURL}}.git
+cd ownvault
+go build -o ownvault .
+
+./ownvault                                     # http://localhost:8080
+./ownvault -token "$(openssl rand -hex 16)"    # public deployment</code></pre>
+    <p class="section-lead">
+      Put it behind a reverse proxy for TLS. The
+      <a href="{{.RepoURL}}#readme">README</a> covers the flags, the Docker
+      deployment, and the phone install steps;
+      <a href="{{.RepoURL}}/blob/master/DESIGN-DECISIONS.md">DESIGN-DECISIONS.md</a>
+      explains why each part is built the way it is.
+    </p>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap cta-inner">
+    <h2>Take a look at the code</h2>
+    <p>It is one Go file, a handful of vanilla JavaScript modules, and no build step. Read all of it in an evening.</p>
+    <p class="hero-actions">
+      <a class="btn btn-gold" href="{{.RepoURL}}">Open the repository</a>
+      <a class="btn btn-ghost" href="/contact">Ask a question</a>
+    </p>
+  </div>
+</section>
+
+</main>
+{{template "foot" .}}

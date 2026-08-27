@@ -1,0 +1,89 @@
+{{template "head" .}}
+<main id="main" class="page">
+<div class="wrap narrow">
+
+  <h1 class="page-title">Contact</h1>
+  <p class="section-lead">
+    Questions about running a server, a bug, an idea, or an offer to let
+    someone sync through yours — all welcome.
+  </p>
+
+  {{if .Sent}}
+  <div class="alert alert-ok" role="status">
+    <h2>Message sent</h2>
+    <p>Thanks. A reply goes to the address you gave, usually within a few days.</p>
+  </div>
+  {{else}}
+
+  {{if .Error}}
+  <div class="alert alert-bad" role="alert">
+    <p>{{.Error}}</p>
+  </div>
+  {{end}}
+
+  {{if .MailOff}}
+  <div class="alert alert-warn" role="status">
+    <p>This server has no mail destination configured, so the form cannot send.
+       Please open a <a href="{{.RepoURL}}/issues">GitHub issue</a> instead.</p>
+  </div>
+  {{end}}
+
+  <form class="form" method="post" action="/contact">
+    <input type="hidden" name="t" value="{{.Token}}">
+
+    <!-- Honeypot. Hidden by CSS, so a person never sees it; a bot fills every
+         field it finds and gives itself away. -->
+    <div class="hp" aria-hidden="true">
+      <label for="website">Website</label>
+      <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label for="name">Your name</label>
+      <input type="text" id="name" name="name" maxlength="100" required
+             autocomplete="name" value="{{.Form.Name}}">
+    </div>
+
+    <div class="field">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" maxlength="254" required
+             autocomplete="email" value="{{.Form.Email}}">
+      <p class="hint">Used to reply, and for nothing else. It is not stored anywhere.</p>
+    </div>
+
+    <div class="field">
+      <label for="subject">Subject</label>
+      <input type="text" id="subject" name="subject" maxlength="150" required
+             value="{{.Form.Subject}}">
+    </div>
+
+    <div class="field">
+      <label for="message">Message</label>
+      <textarea id="message" name="message" rows="9" maxlength="8000" required>{{.Form.Message}}</textarea>
+    </div>
+
+    <p class="hint">
+      Never send a password, a master password, a Vault ID, or a sync token in
+      this form. Nobody needs them to help you, and email is not the place for
+      them.
+    </p>
+
+    <button class="btn btn-gold" type="submit">Send message</button>
+  </form>
+  {{end}}
+
+  <section class="other-ways">
+    <h2>Other ways to reach it</h2>
+    <dl class="deflist">
+      <dt>Found a bug, or want a feature</dt>
+      <dd><a href="{{.RepoURL}}/issues">Open a GitHub issue</a>. That is the best place for anything a change to the code would fix.</dd>
+      <dt>Found a security problem</dt>
+      <dd>Use this form with <em>security</em> in the subject, and describe the class of problem rather than posting a working exploit. Expect a reply before any public write-up.</dd>
+      <dt>Want to read the reasoning first</dt>
+      <dd><a href="{{.RepoURL}}/blob/master/DESIGN-DECISIONS.md">DESIGN-DECISIONS.md</a> records why each choice was made, including the ones that are trade-offs rather than wins.</dd>
+    </dl>
+  </section>
+
+</div>
+</main>
+{{template "foot" .}}

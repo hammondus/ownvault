@@ -4,6 +4,57 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## The website is a separate module, and has no JavaScript (2026-08)
+
+`site/` holds the public website: a landing page and a contact form. Three
+calls in it are worth recording.
+
+**Its own `go.mod`, not a package of the vault server.** The obvious layout is
+`go build ./site` in the existing module. That was rejected because the site
+needs `github.com/hammondus/mailer`, and the vault server has no business
+carrying an SMTP client. A nested `go.mod` removes `site/` from the parent
+module automatically, so `go build ./...` and `go vet ./...` at the root never
+see it and the dependency trees stay disjoint. The cost is remembering to run
+`make` from `site/`, which the README says in its second line.
+
+The same split applies to deployment: the site gets its own `Dockerfile` and
+`docker-compose.yaml`, and a copy edit never restarts a container people are
+syncing vaults through.
+
+**No JavaScript at all.** The contact form is a plain HTML POST. That is not
+minimalism for its own sake — it is what lets the CSP be `script-src 'none'`,
+under which an injected `<script>` has nothing to run in. Client-side
+validation would have bought a slightly nicer error experience in exchange for
+the strongest header on the page.
+
+**Anti-spam without a CAPTCHA.** A CAPTCHA means a third-party script, which
+the paragraph above rules out, and it taxes every visitor to stop a robot.
+Instead: an off-screen honeypot field (off-screen rather than `display: none`,
+because some bots skip fields that are not rendered), an HMAC-signed timestamp
+in each rendered form that rejects submissions faster than three seconds or
+older than two hours, three submissions per IP per hour, and a 64 KiB body cap.
+The HMAC key is generated per process — a restart invalidating open forms is a
+fair trade for keeping a secret out of configuration.
+
+The form's `From` is always our own verified address and the visitor's address
+goes in `Reply-To`. Sending as an address on someone else's domain fails SPF
+and burns the sending domain's reputation.
+
+**Asset hashes are per file, not one version for the site.** The first cut
+hashed `style.css` and stamped that one version onto every asset URL. That is
+wrong in a way that only shows up later: an edited image whose URL did not
+change stays cached for a year. `hashAssets` walks `web/` at startup and
+records a hash per path. Hashing once at startup is correct only because the
+files are embedded and cannot change under a running process — in `-dev` they
+are read from disk, so hashing is skipped and `no-cache` does the work.
+
+**The screenshots are generated, not curated.** `site/tools/shots.js` drives a
+real browser against a real vault, seeded with invented logins, and writes
+`web/img/*.png`. Checking the tool in rather than only its output means a UI
+change is one `make shots` away from accurate marketing, instead of five stale
+PNGs nobody dares touch. Playwright is installed on demand by that target and
+is never a dependency of the site, which still ships no `node_modules`.
+
 ## Why there is a server token at all (2026-08)
 
 The vault is client-encrypted, so the token is easy to mistake for a

@@ -328,6 +328,33 @@ PWA — the extension connects to an existing vault. Site matching is by
 hostname suffix (entry host must equal, or be a parent domain of, the tab
 host — never the reverse).
 
+# Website
+
+`site/` holds the public website — a landing page and a contact form. It is a
+**separate Go module** (`site/go.mod`), so `go build ./...` at the repository
+root never touches it and `github.com/hammondus/mailer` stays out of the vault
+server's dependency tree. Run every site command from `site/`. It has its own
+`Makefile`, `Dockerfile`, `docker-compose.yaml`, `.env.example`, and README.
+
+Rules to keep when touching it:
+
+- **No JavaScript, ever.** The CSP is `script-src 'none'`, which is only
+  possible because the contact form is a plain HTML POST. Adding a script means
+  weakening the strongest header on the page.
+- **Mail goes through `mailer`**, configured from `OWNVAULT_SITE_SMTP_*`. The
+  `From` is always our own verified identity and the visitor's address goes in
+  `Reply-To` — never the other way round.
+- **Anti-spam is four cheap layers**, not a CAPTCHA: off-screen honeypot,
+  HMAC-signed render timestamp (3 s floor, 2 h ceiling), three submissions per
+  IP per hour, 64 KiB body cap.
+- **Screenshots in `site/web/img/` are generated** by `site/tools/shots.js`
+  (`make shots`, with the app running on :8080). After a UI change that alters
+  what they show, regenerate rather than editing copy around a stale image.
+- **Caching follows the house rule**: HTML `no-cache`; `{{asset}}` stamps a
+  per-file content hash, and anything carrying `?v=` is served `immutable`.
+  Hashes are computed at startup from the embedded files, and skipped in `-dev`
+  where files come from disk.
+
 # Public Use
 As the server is zero trust, if you want public sync on your devices, you can
 set up your own, or, with their permission, use someone elses.

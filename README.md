@@ -204,6 +204,8 @@ public deployment, use a real certificate (Let's Encrypt / Caddy) instead.
   - `js/sync.js` — HTTP sync orchestration and the Vault ID / token config.
   - `js/vaultui.js` — the lock gate, list/search, record modal, conflict UI.
   - `js/app.js` — app-shell chrome (drawer, routing, reachability).
+- `extension/` — the Chrome companion; `make extension` assembles it.
+- `site/` — the public website, a separate Go module (see below).
 
 ## Browser extension
 
@@ -217,6 +219,26 @@ entries in the app.
 
 To build and install: `make extension`, then **chrome://extensions** →
 enable Developer mode → **Load unpacked** → pick `dist/extension`.
+
+## Website
+
+`site/` is the public website: a landing page explaining what the app does,
+and a contact form that sends through `github.com/hammondus/mailer`. It is a
+**separate Go module** with its own `Makefile`, `Dockerfile`, and
+`docker-compose.yaml`, so it deploys on its own schedule and keeps the mailer
+dependency out of the vault server. Run its commands from `site/`:
+
+```sh
+cd site
+make run          # http://localhost:8090, files served from disk
+make shots        # regenerate the app screenshots (needs the app on :8080)
+make deploy       # on the server: pull, build, restart, smoke-test
+```
+
+The site has no JavaScript; the contact form is a plain POST. With no SMTP
+host configured, messages are logged instead of sent, so the whole path runs
+locally. See `site/README.md` for the flags, the anti-spam layers, and the
+mail environment variables.
 
 ## Non-goals
 
