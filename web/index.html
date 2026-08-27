@@ -95,13 +95,13 @@
            one. See vaultui.js startGate / handleConnect. -->
       <form id="connect-form" class="lock-form" hidden>
         <p class="lock-lead">Connect this device to an existing vault, or start a
-          new one. Your Vault ID is shown in Settings on a device that already
-          has the vault.</p>
+          new one. The setup code (or Vault ID) is shown in Settings on a device
+          that already has the vault.</p>
         <input id="connect-id" class="lock-input" type="text"
-               placeholder="Vault ID" autocomplete="off" autocapitalize="off"
+               placeholder="Setup code or Vault ID" autocomplete="off" autocapitalize="off"
                autocorrect="off" spellcheck="false">
         <input id="connect-token" class="lock-input" type="password"
-               placeholder="Access token (only if the server needs one)" autocomplete="off">
+               placeholder="Access token (not needed with a setup code)" autocomplete="off">
         <p id="connect-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Connect</button>
         <button id="connect-create" class="lock-link" type="button">Start a new vault instead</button>

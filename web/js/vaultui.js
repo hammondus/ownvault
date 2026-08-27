@@ -288,11 +288,26 @@
     }
     var id = byId("connect-id").value.trim();
     if (!id) {
-      err.textContent = "Enter your Vault ID, or start a new vault.";
+      err.textContent = "Enter your setup code or Vault ID, or start a new vault.";
       show(err, true);
       return;
     }
-    Sync.setToken(byId("connect-token").value.trim());
+    // A pasted setup code carries the token too, so it wins over the
+    // (probably empty) token field. Its origin part guards against pasting a
+    // code minted by a different server into this one.
+    var code = Sync.parseSetupCode(id);
+    if (code) {
+      if (code.url && window.location && code.url !== window.location.origin) {
+        err.textContent =
+          "That setup code is for " + code.url + " — open the app there to connect.";
+        show(err, true);
+        return;
+      }
+      id = code.vaultId;
+      Sync.setToken(code.token);
+    } else {
+      Sync.setToken(byId("connect-token").value.trim());
+    }
     Sync.setVaultId(id);
     Sync.bootstrap().then(function (res) {
       if (res.exists) {
@@ -516,6 +531,7 @@
     closeModal();
     closeConflictModal();
     clearRecoverySheet(); // never leave printed plaintext in the DOM past a lock
+    hideSetupQR(); // the QR shows the token; don't leave it behind the gate
     var list = byId("pw-list");
     if (list) list.innerHTML = "";
     showConflictBanner(0);
@@ -1157,6 +1173,10 @@
       if (st) st.textContent = Sync.getStatus().message || "";
       var vid = byId("vault-id");
       if (vid) vid.value = Sync.getVaultId();
+      var sc = byId("setup-code");
+      if (sc) sc.value = Sync.getVaultId() ? Sync.makeSetupCode() : "";
+      // A fragment swap replaced any QR that was showing; drop its object URL.
+      hideSetupQR();
     }
     if (window.App) {
       var vn = byId("vault-name");
@@ -1369,6 +1389,47 @@
     show(m, true);
   }
 
+  // Settings setup-code QR: server-rendered PNG (see sync.js fetchSetupQR),
+  // shown via an object URL because a plain <img src> can't carry the auth
+  // header. The QR displays the token, so it's shown on demand and torn down
+  // on toggle, fragment swap, and lock.
+  var setupQrUrl = null;
+
+  function hideSetupQR() {
+    var box = byId("setup-qr");
+    if (box) {
+      box.hidden = true;
+      box.innerHTML = "";
+    }
+    if (setupQrUrl) {
+      URL.revokeObjectURL(setupQrUrl);
+      setupQrUrl = null;
+    }
+  }
+
+  function toggleSetupQR() {
+    var box = byId("setup-qr");
+    if (!box) return;
+    if (!box.hidden) {
+      hideSetupQR();
+      return;
+    }
+    if (!window.Sync || !Sync.getVaultId()) return;
+    Sync.fetchSetupQR()
+      .then(function (blob) {
+        hideSetupQR();
+        setupQrUrl = URL.createObjectURL(blob);
+        var img = document.createElement("img");
+        img.src = setupQrUrl;
+        img.alt = "Setup code as a QR code";
+        box.appendChild(img);
+        box.hidden = false;
+      })
+      .catch(function () {
+        toast("Couldn't get the QR code — check the server connection.");
+      });
+  }
+
   // Settings "Remove from this device": wipe everything this origin holds —
   // IndexedDB vault, all localStorage (sync config, vault name, UI prefs),
   // service worker + caches — then reload into the first-run gate. This is the
@@ -1451,6 +1512,14 @@
     // localStorage — the wipe would cost the transfer more than it protects.
     if (e.target.closest("#sync-token-copy")) {
       if (window.Sync) copyValue(Sync.getToken(), false);
+      return;
+    }
+    if (e.target.closest("#setup-code-copy")) {
+      if (window.Sync && Sync.getVaultId()) copyValue(Sync.makeSetupCode(), false);
+      return;
+    }
+    if (e.target.closest("#setup-qr-btn")) {
+      toggleSetupQR();
       return;
     }
     if (e.target.closest("#wipe-device")) {

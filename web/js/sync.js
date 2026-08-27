@@ -369,6 +369,78 @@ window.Sync = (function () {
     );
   }
 
+  /* ---------- setup code ---------- */
+
+  // One-paste device setup: "ov1." + b64url(vaultId) + "." + b64url(token) +
+  // "." + b64url(server origin). Parts are base64url-encoded because the
+  // token is admin-chosen and could contain the separator. Every value in it
+  // is already known to the server (which is also why the server may safely
+  // QR-render it); the master password is deliberately absent — it never
+  // travels. The origin part lets the connect screen reject a code pasted
+  // into the wrong server's app, and gives the browser extension (which isn't
+  // same-origin) the server URL it needs.
+
+  function b64urlEncode(s) {
+    return window
+      .btoa(window.unescape(encodeURIComponent(s)))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  }
+
+  function b64urlDecode(s) {
+    s = s.replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    return decodeURIComponent(window.escape(window.atob(s)));
+  }
+
+  function makeSetupCode() {
+    var origin =
+      getServerUrl() || (window.location && window.location.origin) || "";
+    return (
+      "ov1." +
+      b64urlEncode(getVaultId()) +
+      "." +
+      b64urlEncode(getToken()) +
+      "." +
+      b64urlEncode(origin)
+    );
+  }
+
+  // {vaultId, token, url}, or null when str isn't a setup code (callers fall
+  // back to treating it as a bare Vault ID).
+  function parseSetupCode(str) {
+    str = (str || "").trim();
+    if (str.slice(0, 4) !== "ov1.") return null;
+    var parts = str.slice(4).split(".");
+    if (parts.length !== 3) return null;
+    try {
+      var vid = b64urlDecode(parts[0]);
+      if (!vid) return null;
+      return {
+        vaultId: vid,
+        token: b64urlDecode(parts[1]),
+        url: b64urlDecode(parts[2])
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // The setup code as a QR PNG, rendered by the server (see makeSetupCode for
+  // why that's safe). POST, never GET: the code holds the token, and URLs
+  // land in access logs. Resolves to a Blob for an object URL.
+  function fetchSetupQR() {
+    return api("/api/setupqr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: makeSetupCode() })
+    }).then(function (res) {
+      if (!res.ok) throw new Error("qr " + res.status);
+      return res.blob();
+    });
+  }
+
   // Lock-gate auth probe: does the server accept the current token? Hits
   // /api/state (the server's purpose-built light probe). Resolves
   // { needsAuth, offline } and never rejects; the caller decides what each
@@ -472,6 +544,9 @@ window.Sync = (function () {
     syncSoon: syncSoon,
     bootstrap: bootstrap,
     checkAuth: checkAuth,
+    makeSetupCode: makeSetupCode,
+    parseSetupCode: parseSetupCode,
+    fetchSetupQR: fetchSetupQR,
     start: start,
     stop: stop
   };

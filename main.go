@@ -37,6 +37,7 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+	"rsc.io/qr"
 )
 
 // Request-body caps for the sync API. The data is small by nature (a wrapped
@@ -297,6 +298,7 @@ func main() {
 	mux.HandleFunc("/api/meta", auth(*token, limiter, st.handleMeta(h)))
 	mux.HandleFunc("/api/pull", auth(*token, limiter, st.handlePull))
 	mux.HandleFunc("/api/push", auth(*token, limiter, st.handlePush(h)))
+	mux.HandleFunc("/api/setupqr", auth(*token, limiter, handleSetupQR))
 
 	// Server-sent events: keepalive pings plus "changed" notifications when
 	// another device writes. Deliberately unauthenticated even when a token is
@@ -413,7 +415,10 @@ func secureHeaders(next http.Handler) http.Handler {
 		// 'wasm-unsafe-eval' admits ONLY WebAssembly compilation (the Argon2id
 		// KDF module), not JS eval — the string-to-code paths stay blocked.
 		h.Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; "+
+			// img-src blob: is for the setup-code QR, which arrives as an
+			// authenticated fetch and is shown via an object URL (a plain
+			// <img src> can't carry the auth header).
+			"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob:; "+
 				"connect-src 'self'; manifest-src 'self' blob:; worker-src 'self'; "+
 				"object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -709,6 +714,36 @@ func (s *store) handleState(w http.ResponseWriter, r *http.Request) {
 		_ = s.db.QueryRow(`SELECT COUNT(*) FROM meta WHERE vault_id = ?`, v).Scan(&n)
 	}
 	writeJSON(w, map[string]any{"rev": rev, "hasMeta": n > 0})
+}
+
+// handleSetupQR renders the client-composed setup code as a QR PNG. The code
+// holds only values this server already knows — the vault id (sent on every
+// API call), its own token, its own URL — so rendering it here gives the
+// server nothing new and spares the client a vendored JS QR encoder. POST
+// body, never a query parameter: the code contains the token, and URLs end
+// up in access logs. no-store for the same reason.
+func handleSetupQR(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
+		body.Text == "" || len(body.Text) > 1024 {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	code, err := qr.Encode(body.Text, qr.M)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store, private")
+	_, _ = w.Write(code.PNG())
 }
 
 // GET returns the wrapped-key record (for a fresh device to bootstrap).

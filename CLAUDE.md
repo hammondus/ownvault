@@ -347,8 +347,11 @@ and can't see or enumerate each other's (already encrypted) data; the server
 still only ever sees an opaque id + ciphertext. There are deliberately **no
 usernames/accounts** — the Vault ID picks the blob, the master password opens
 it. `-token`, if set, is a separate server-wide access gate (not per-person).
-A fresh device joins an existing vault via the lock-screen **connect** step
-(enter the Vault ID + token); Settings shows the current Vault ID to copy over.
+A fresh device joins an existing vault via the lock-screen **connect** step:
+paste the **setup code** from Settings (one string bundling Vault ID + token +
+origin, composed in `sync.js` `makeSetupCode`; also shown as a QR, rendered
+server-side by `/api/setupqr` — safe because every value in it is already
+server-known), or enter the Vault ID + token separately.
 SSE `changed` events are scoped per vault (`/events?vault=<id>`); the `/events`
 reachability probe in app.js connects unscoped and just rides the keepalives.
 The old single-vault schema (entries keyed by id alone, one `meta` row) is

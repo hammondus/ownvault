@@ -928,6 +928,23 @@ textarea.form-input {
   min-width: 0;
 }
 
+/* Setup-code QR. The white padding is the scanner's quiet zone — it must
+   stay opaque white in both colour schemes or phone cameras struggle. */
+.setup-qr {
+  display: flex;
+  justify-content: center;
+  background: #fff;
+  padding: 16px;
+  margin-top: 12px;
+  border-radius: 8px;
+}
+
+.setup-qr img {
+  width: 220px;
+  height: 220px;
+  image-rendering: pixelated; /* keep module edges crisp when scaled */
+}
+
 .sync-status {
   font-size: 0.85rem;
   color: #6b7580;

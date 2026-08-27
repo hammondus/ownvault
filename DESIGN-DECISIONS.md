@@ -4,6 +4,63 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Why there is a server token at all (2026-08)
+
+The vault is client-encrypted, so the token is easy to mistake for a
+redundant layer. It isn't — but it also isn't what keeps secrets secret.
+The master password owns **secrecy**; the token owns **availability and
+abuse**. Without it, anyone who finds the server's URL could:
+
+1. **Store junk.** Mint unlimited vault ids and fill the disk. The
+   per-request body cap limits one request, not a loop — a tokenless server
+   is a free anonymous dead-drop.
+2. **Read ciphertext whenever a Vault ID leaks.** The id is unguessable but
+   travels in places the master password never does (the SSE URL
+   `?vault=<id>` can land in proxy logs). Ciphertext in hand means unlimited
+   *offline* brute force against the master password — the exact attack the
+   12-character minimum and Argon2id exist to slow. The token makes a leaked
+   id alone worthless.
+3. **Squat unclaimed vaults.** Per-vault write auth protects claimed vaults
+   even from token holders, but it's TOFU — first write wins. Tokenless, an
+   attacker could claim a Vault ID before its owner's first sync.
+
+Because the token is an anti-abuse gate and not part of the encryption, it
+can be server-wide and shared between co-tenants without weakening anyone's
+vault — and it's optional for localhost/LAN setups, where "found the URL"
+isn't a meaningful attacker. This is also why bundling it into the setup
+code (next entry) costs nothing: it was never the secrecy boundary.
+
+## Setup code: one paste to connect, QR rendered server-side (2026-08)
+
+Connecting a new device needed two long pastes (Vault ID, then token). The
+setup code bundles them: `ov1.` + base64url(vaultId) + `.` +
+base64url(token) + `.` + base64url(origin), composed client-side in sync.js.
+The connect screen's ID field accepts either form. Design points:
+
+- **Parts are base64url-encoded** because the token is admin-chosen and
+  could contain the separator. The origin part rejects a code pasted into a
+  different server's app, and gives the (non-same-origin) browser extension
+  the server URL when it grows setup-code support.
+- **No security change**: both values already travel together through the
+  same channel during setup, and the code grants exactly what ID+token
+  grant — ciphertext read. The master password is deliberately absent.
+- **The QR is rendered by the server** (`/api/setupqr`, `rsc.io/qr` — the
+  same dependency teenyurl trusts). This looks like a zero-knowledge
+  violation but isn't: every value in the code is already server-known (the
+  vault id rides every API call, the token is the server's own, the URL is
+  its address). The alternative was vendoring a JS QR encoder; a
+  ~zero-dep Go library the reviewer already knows beat ~50 KB of vendored
+  JS. Rendering needs the server up, which is fine — connecting a new
+  device needs the server up anyway.
+- **POST, not GET, and `no-store, private`**: the code contains the token;
+  query strings land in access logs and caches. The client fetches the PNG
+  with auth headers and shows it via a blob object URL (a plain `<img src>`
+  can't send headers), which is why CSP `img-src` gained `blob:`. The QR is
+  rendered on demand and torn down on toggle, fragment swap, and lock.
+- **A magic link (`https://server/#connect=...`) was rejected**: the
+  fragment stays off the wire, but the URL — token included — lands in the
+  new device's browser history and autocomplete.
+
 ## Settings: token is retrievable; "remove from device" instead of uninstall (2026-08)
 
 Two related Settings calls:

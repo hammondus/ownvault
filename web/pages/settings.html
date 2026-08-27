@@ -90,8 +90,18 @@
       </div>
     </div>
     <div class="form-row">
-      <span class="form-label">Vault ID — enter this on another device to sync it
-        to this vault</span>
+      <span class="form-label">Setup code — one paste (or scan) connects a new
+        device; it bundles the Vault ID and access token</span>
+      <div class="sync-row">
+        <input id="setup-code" class="form-input" type="text" readonly autocomplete="off"
+               placeholder="(created with your vault)">
+        <button id="setup-code-copy" class="btn" type="button">Copy</button>
+        <button id="setup-qr-btn" class="btn" type="button">QR</button>
+      </div>
+      <div id="setup-qr" class="setup-qr" hidden></div>
+    </div>
+    <div class="form-row">
+      <span class="form-label">Vault ID</span>
       <div class="sync-row">
         <input id="vault-id" class="form-input" type="text" readonly autocomplete="off"
                placeholder="(created with your vault)">
