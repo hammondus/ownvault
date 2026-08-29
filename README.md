@@ -106,9 +106,10 @@ copies — but share a server with people you'd trust not to vandalise it.
 3. Enter your **master password** to unlock. That's it — edits now sync both
    ways.
 
-On the lock screen you can instead **Start a new vault** (mints a fresh Vault
-ID) or go **offline only** (no server at all; you can enable sync later in
-Settings).
+On the lock screen you can instead **Start a new vault**, which mints a fresh
+Vault ID. Every vault syncs: the server is the vault's off-device backup, and
+browser storage alone is too easy to lose. The app still works with the server
+unreachable and catches up when it returns.
 
 ## Sync, conflicts, and backup
 

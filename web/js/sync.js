@@ -11,7 +11,7 @@
  * notification from another device triggers a debounced re-sync.
  *
  * Config (localStorage, not secret-bearing beyond the shared token):
- *   syncEnabled ("0" disables), syncToken (bearer token for public servers),
+ *   syncToken (bearer token for public servers),
  *   vaultId (which namespace on the server this device's vault lives in),
  *   serverUrl (base URL of the sync server; empty = same origin — the PWA
  *   case. The browser extension sets it, since its pages live on a
@@ -26,10 +26,10 @@
 window.Sync = (function () {
   "use strict";
 
-  var ENABLED_KEY = "syncEnabled";
   var TOKEN_KEY = "syncToken";
-  var VAULT_KEY = "vaultId";
   var SERVER_KEY = "serverUrl";
+  var REG_KEY = "vaults"; // JSON array of known vault ids, in display order
+  var CURRENT_KEY = "currentVault"; // last-used id; read only at page load
   var DEBOUNCE_MS = 600;
 
   var listeners = [];
@@ -39,33 +39,19 @@ window.Sync = (function () {
   var events = null;
   var debounceTimer = null;
 
-  /* ---------- config ---------- */
+  /* ---------- config (all per-vault) ---------- */
 
-  function isEnabled() {
-    try {
-      return localStorage.getItem(ENABLED_KEY) !== "0";
-    } catch (e) {
-      return true;
-    }
-  }
-
-  function setEnabled(on) {
-    try {
-      localStorage.setItem(ENABLED_KEY, on ? "1" : "0");
-    } catch (e) {
-      /* ignore */
-    }
-    if (on) {
-      subscribe();
-      syncSoon();
-    } else {
-      unsubscribe();
-    }
+  // Every config value is stored under "<base>:<vaultId>" for the ACTIVE
+  // vault (vault.js owns the active id; there is no unsuffixed fallback).
+  // With no vault selected the getters read a nonexistent key and return ""
+  // — the gate flows always select a vault before storing anything.
+  function cfgKey(base) {
+    return base + ":" + (window.Vault ? Vault.getActiveId() : "");
   }
 
   function getToken() {
     try {
-      return localStorage.getItem(TOKEN_KEY) || "";
+      return localStorage.getItem(cfgKey(TOKEN_KEY)) || "";
     } catch (e) {
       return "";
     }
@@ -73,7 +59,7 @@ window.Sync = (function () {
 
   function setToken(t) {
     try {
-      localStorage.setItem(TOKEN_KEY, t || "");
+      localStorage.setItem(cfgKey(TOKEN_KEY), t || "");
     } catch (e) {
       /* ignore */
     }
@@ -82,7 +68,7 @@ window.Sync = (function () {
   function getServerUrl() {
     try {
       // Normalized without a trailing slash so paths concatenate cleanly.
-      return (localStorage.getItem(SERVER_KEY) || "").replace(/\/+$/, "");
+      return (localStorage.getItem(cfgKey(SERVER_KEY)) || "").replace(/\/+$/, "");
     } catch (e) {
       return "";
     }
@@ -90,26 +76,88 @@ window.Sync = (function () {
 
   function setServerUrl(u) {
     try {
-      localStorage.setItem(SERVER_KEY, (u || "").trim().replace(/\/+$/, ""));
+      localStorage.setItem(cfgKey(SERVER_KEY), (u || "").trim().replace(/\/+$/, ""));
     } catch (e) {
       /* ignore */
     }
   }
 
+  // The active id IS the vault identity — no separate stored copy to drift.
   function getVaultId() {
+    return window.Vault ? Vault.getActiveId() : "";
+  }
+
+  // Register + select. Kept under this name because it is the shape every
+  // caller wants (connect, restore, the extension's ov:connect): "this id is
+  // now a vault on this device, and it is the one I mean".
+  function setVaultId(id) {
+    if (!id) return;
+    addVault(id);
+    selectVault(id);
+  }
+
+  /* ---------- vault registry ---------- */
+
+  function listVaults() {
     try {
-      return localStorage.getItem(VAULT_KEY) || "";
+      var ids = JSON.parse(localStorage.getItem(REG_KEY) || "[]");
+      return Array.isArray(ids) ? ids : [];
     } catch (e) {
-      return "";
+      return [];
     }
   }
 
-  function setVaultId(id) {
+  function saveVaults(ids) {
     try {
-      localStorage.setItem(VAULT_KEY, id || "");
+      localStorage.setItem(REG_KEY, JSON.stringify(ids));
     } catch (e) {
       /* ignore */
     }
+  }
+
+  function addVault(id) {
+    var ids = listVaults();
+    if (ids.indexOf(id) < 0) {
+      ids.push(id);
+      saveVaults(ids);
+    }
+  }
+
+  // Forget one vault's registration and config. Names keys owned elsewhere
+  // (syncCursor: vault.js, vaultName: app.js) on purpose: one removal site
+  // beats three cross-module one-call methods. The vault's DATABASE is
+  // deleted separately (Vault.wipeLocal) — the caller sequences both.
+  function removeVault(id) {
+    saveVaults(
+      listVaults().filter(function (v) {
+        return v !== id;
+      })
+    );
+    try {
+      localStorage.removeItem(TOKEN_KEY + ":" + id);
+      localStorage.removeItem(SERVER_KEY + ":" + id);
+      localStorage.removeItem("syncCursor:" + id);
+      localStorage.removeItem("vaultName:" + id);
+      if (localStorage.getItem(CURRENT_KEY) === id) {
+        localStorage.removeItem(CURRENT_KEY);
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  // Make a vault the active one for this tab and remember it as the last
+  // used. Locks via Vault.use, and resets the status line so a stale sync
+  // state or conflict count never leaks across vaults. Does NOT register the
+  // id — a probe of an unknown vault must not leave a ghost registration.
+  function selectVault(id) {
+    if (window.Vault) Vault.use(id);
+    try {
+      localStorage.setItem(CURRENT_KEY, id);
+    } catch (e) {
+      /* ignore */
+    }
+    emit({ state: "idle", ok: true, message: "", conflicts: 0 });
   }
 
   // A fresh random namespace for a brand-new vault. UUID where available (easy
@@ -122,8 +170,8 @@ window.Sync = (function () {
     return s;
   }
 
-  // Guarantee this device has a vault id (used the moment a local vault exists
-  // so sync has a namespace to push into). Never overwrites an existing one.
+  // Guarantee this tab has an active vault (used the moment a local vault
+  // exists so sync has a namespace to push into). Never overrides one.
   function ensureVaultId() {
     var id = getVaultId();
     if (!id) {
@@ -158,8 +206,13 @@ window.Sync = (function () {
 
   function headers(extra) {
     var h = extra || {};
+    // A caller-set token wins (same rule as X-Vault-Write below): checkAuth
+    // probes the typed token before any vault id exists to store it under.
+    // Presence check, not truthiness: an explicitly EMPTY override must
+    // suppress the stored token too, or the probe would vouch for another
+    // vault's token while "" is what actually gets stored.
     var t = getToken();
-    if (t) h["X-Vault-Token"] = t;
+    if (t && !("X-Vault-Token" in h)) h["X-Vault-Token"] = t;
     var v = getVaultId();
     if (v) h["X-Vault-Id"] = v;
     // Per-vault write credential, derived from the vault key on unlock
@@ -295,7 +348,6 @@ window.Sync = (function () {
   // Full sync cycle. Never rejects: offline is a normal state, surfaced via
   // status rather than an error.
   function syncNow() {
-    if (!isEnabled()) return Promise.resolve();
     // No namespace yet means nothing to sync against. A local vault always has
     // one by the time it's unlocked (start() calls ensureVaultId), so this only
     // skips the pre-vault gate states.
@@ -349,11 +401,6 @@ window.Sync = (function () {
   //   needsAuth - the server refused for lack of a valid token, so the lock
   //               gate should prompt for one before deciding create vs unlock
   function bootstrap() {
-    if (!isEnabled()) {
-      return Vault.isInitialized().then(function (ex) {
-        return { exists: ex, needsAuth: false };
-      });
-    }
     return pull().then(
       function () {
         return Vault.isInitialized().then(function (ex) {
@@ -462,8 +509,14 @@ window.Sync = (function () {
   // { needsAuth, offline } and never rejects; the caller decides what each
   // outcome means (the create gate blocks on both — a synced vault must not
   // be created against a server that refused the token or didn't answer).
-  function checkAuth() {
-    return api("/api/state").then(
+  function checkAuth(tokenOverride) {
+    // A string argument (even "") probes exactly that token — the one the
+    // caller is about to store — never the active vault's stored token.
+    var opts;
+    if (typeof tokenOverride === "string") {
+      opts = { headers: { "X-Vault-Token": tokenOverride } };
+    }
+    return api("/api/state", opts).then(
       function (res) {
         return { needsAuth: res.status === 401, offline: false };
       },
@@ -474,7 +527,6 @@ window.Sync = (function () {
   }
 
   function syncSoon() {
-    if (!isEnabled()) return;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(syncNow, DEBOUNCE_MS);
   }
@@ -485,7 +537,7 @@ window.Sync = (function () {
   var sseRetryMs = 5000;
 
   function subscribe() {
-    if (events || !isEnabled()) return;
+    if (events) return;
     clearTimeout(sseRetryTimer);
     try {
       // Scope change notifications to our vault so a shared server doesn't wake
@@ -530,10 +582,8 @@ window.Sync = (function () {
   }
 
   // Called after unlock. By now a local vault exists, so guarantee it has a
-  // namespace (covers vaults created before namespacing, and offline-first
-  // vaults whose first sync is only being enabled now).
+  // namespace (covers vaults created before namespacing).
   function start() {
-    if (!isEnabled()) return;
     ensureVaultId();
     subscribe();
     syncNow();
@@ -543,9 +593,26 @@ window.Sync = (function () {
     unsubscribe();
   }
 
+  // Point this tab at the last-used vault (or the first known one if that
+  // record is stale). Read-only: currentVault is only WRITTEN by an explicit
+  // selection, so a mere page load never steals "last used" from another
+  // tab. app.js may override this from an installed icon's ?vault= parameter
+  // before anything opens a database. This same block is what reopens the
+  // extension's single vault after a browser restart.
+  (function () {
+    var ids = listVaults();
+    if (!ids.length) return;
+    var cur = "";
+    try {
+      cur = localStorage.getItem(CURRENT_KEY) || "";
+    } catch (e) {
+      /* ignore */
+    }
+    if (ids.indexOf(cur) < 0) cur = ids[0];
+    if (window.Vault) Vault.use(cur);
+  })();
+
   return {
-    isEnabled: isEnabled,
-    setEnabled: setEnabled,
     getToken: getToken,
     setToken: setToken,
     getServerUrl: getServerUrl,
@@ -554,6 +621,10 @@ window.Sync = (function () {
     setVaultId: setVaultId,
     newVaultId: newVaultId,
     ensureVaultId: ensureVaultId,
+    listVaults: listVaults,
+    addVault: addVault,
+    removeVault: removeVault,
+    selectVault: selectVault,
     onStatus: onStatus,
     getStatus: getStatus,
     syncNow: syncNow,

@@ -14,7 +14,9 @@
   <section id="connect-view" hidden>
     <p class="hint">Connect to your Own Vault server. Find the Vault ID in the
       app under Settings.</p>
-    <form id="connect-form">
+    <!-- novalidate: popup.js does the same checks, so a bad field lands in
+         #connect-err with the field ringed, not in a native bubble. -->
+    <form id="connect-form" novalidate>
       <label>Server URL
         <input id="c-server" type="url" placeholder="https://vault.example.com" required
                autocomplete="off" spellcheck="false">

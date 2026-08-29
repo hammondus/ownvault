@@ -99,12 +99,14 @@
     },
 
     // First-run: point at a server + vault, pull, and report what the lock
-    // gate should show next. Setting config before bootstrap is safe: a
-    // failed pull leaves an empty local vault and connect can run again.
+    // gate should show next. The vault id goes FIRST: config keys are
+    // suffixed per vault, so serverUrl/token need an active id to land
+    // under. Setting config before bootstrap is safe: a failed pull leaves
+    // an empty local vault and connect can run again.
     "ov:connect": function (msg) {
+      Sync.setVaultId((msg.vaultId || "").trim());
       Sync.setServerUrl(msg.serverUrl || "");
       Sync.setToken(msg.token || "");
-      Sync.setVaultId((msg.vaultId || "").trim());
       return Sync.bootstrap();
     },
 

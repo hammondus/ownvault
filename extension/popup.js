@@ -41,7 +41,41 @@
       byId(v).hidden = v !== view;
     });
     byId("lock-btn").hidden = view === "connect-view" || view === "unlock-view";
+    clearInvalid();
   }
+
+  /* ---------- field-level errors ---------- */
+  // Point an error at the field it is about. The connect form has three
+  // inputs and one button, so "no vault found there" alone leaves the user
+  // to work out which one to change. markInvalid rings the named fields and
+  // focuses the first, because the fix is always "type here". aria-invalid
+  // carries the same fact to a screen reader, which can't see the ring.
+  // Mirrors markInvalid/clearLockInvalid in the PWA's vaultui.js.
+  function markInvalid(ids) {
+    ids.forEach(function (id, n) {
+      var f = byId(id);
+      if (!f) return;
+      f.classList.add("invalid");
+      f.setAttribute("aria-invalid", "true");
+      if (n === 0) f.focus();
+    });
+  }
+
+  function clearInvalid() {
+    var fields = document.querySelectorAll("input.invalid");
+    for (var i = 0; i < fields.length; i++) {
+      fields[i].classList.remove("invalid");
+      fields[i].removeAttribute("aria-invalid");
+    }
+  }
+
+  // Typing in a ringed field is the fix, so drop the ring on the first
+  // keystroke rather than making the user submit again to clear it.
+  document.addEventListener("input", function (e) {
+    if (!e.target || !e.target.classList) return;
+    e.target.classList.remove("invalid");
+    e.target.removeAttribute("aria-invalid");
+  });
 
   function toast(msg) {
     var t = byId("toast");
@@ -249,21 +283,72 @@
 
   /* ---------- wiring ---------- */
 
+  // The form carries novalidate: these checks say the same things the native
+  // `required` / `type=url` bubbles would, but in the popup's own error line
+  // and with the offending field ringed. Sync.setServerUrl only trims — it
+  // never adds a scheme — so a schemeless address must be caught here or it
+  // becomes a relative fetch against the extension's own origin and fails
+  // with something unrecognisable. The protocol check also keeps anything but
+  // http(s) out of a value that goes straight to fetch().
+  function connectFieldError() {
+    var url = byId("c-server").value.trim();
+    if (!url) return { msg: "Enter your Own Vault server's address.", fields: ["c-server"] };
+    var parsed = null;
+    try {
+      parsed = new URL(url);
+    } catch (e) {
+      /* reported below */
+    }
+    if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
+      return {
+        msg: "That server address isn't valid — include https:// at the front.",
+        fields: ["c-server"]
+      };
+    }
+    if (!byId("c-vault").value.trim()) {
+      return {
+        msg: "Enter the Vault ID. Find it in the app under Settings.",
+        fields: ["c-vault"]
+      };
+    }
+    return null;
+  }
+
   byId("connect-form").addEventListener("submit", function (ev) {
     ev.preventDefault();
     var errEl = byId("connect-err");
     errEl.hidden = true;
+    clearInvalid();
+
+    var bad = connectFieldError();
+    if (bad) {
+      errEl.textContent = bad.msg;
+      errEl.hidden = false;
+      markInvalid(bad.fields);
+      return;
+    }
+
     call("ov:connect", {
       serverUrl: byId("c-server").value,
       vaultId: byId("c-vault").value,
       token: byId("c-token").value
     }).then(function (res) {
       if (res.exists) return show("unlock-view");
-      errEl.textContent = res.needsAuth
-        ? "Server refused the token."
-        : "No vault found there — check the server URL and Vault ID.";
+      if (res.needsAuth) {
+        errEl.textContent = "Server refused the token.";
+        errEl.hidden = false;
+        markInvalid(["c-token"]);
+        return;
+      }
+      // Both stay ambiguous here: bootstrap resolves the same way whether the
+      // server answered "no such vault" or was never reached at all. Ring the
+      // two fields the message names, and focus the Vault ID — the one that
+      // gets typed by hand off another device.
+      errEl.textContent = "No vault found there — check the server URL and Vault ID.";
       errEl.hidden = false;
+      markInvalid(["c-vault", "c-server"]);
     }, function (err) {
+      // A transport/host failure, not a field the user can correct.
       errEl.textContent = err.message;
       errEl.hidden = false;
     });

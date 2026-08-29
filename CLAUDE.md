@@ -105,11 +105,23 @@ server can see the number of entries and their update times (never contents).
   conflicts. The imported wrapped-key record only seeds an empty server; an
   existing server meta wins (so restoring the same vault won't revert a
   password changed on another device). A v2 backup file also records the
-  (non-secret) Vault ID; import adopts it (`Sync.setVaultId`) so the restored
-  device reattaches to the same server namespace instead of forking a new one,
-  and the rebase above runs against that vault's live state. Restore is
-  reachable from the lock gate too ("Restore from a backup file"), so a fresh
-  device with no vault can recover before there is anything to unlock.
+  (non-secret) Vault ID; `importVault` switches to that vault's own database
+  before writing — so the restore lands in *the backup's* vault even if a
+  different vault was open — and the caller registers + selects it
+  (`Sync.setVaultId`) so the restored device reattaches to the same server
+  namespace instead of forking a new one, and the rebase above runs against
+  that vault's live state. Restore is reachable from the lock gate too
+  ("Restore from a backup file"), so a fresh device with no vault can recover
+  before there is anything to unlock.
+- **Multi-vault**: one client can hold several vaults. Each vault has its own
+  IndexedDB (`ownvault-<vaultId>`) and suffixed localStorage config
+  (`syncToken:<id>`, `serverUrl:<id>`, `syncCursor:<id>`, `vaultName:<id>`);
+  a registry lists them (`vaults` + `currentVault`, sync.js). One vault is
+  active at a time, per tab and in memory (`Vault.use(id)` /
+  `Vault.getActiveId()`; `Sync.getVaultId()` delegates to it). Device-wide
+  prefs (`colorScheme`, `menuBtnPos`, `menuPinned`, `clipClearSecs`) stay
+  unsuffixed. See DESIGN-DECISIONS.md "Multi-vault" for the full rules
+  (registration vs selection, per-vault installs, remove-from-device).
 
 ## Go server
 
@@ -130,8 +142,13 @@ The server runs wherever the person's needs dictate:
   - HTTPS via Let's Encrypt or a reverse proxy such as Caddy (the template's
     mkcert certs are LAN-only).
 
-Once the app is installed as a PWA, having the server running is recommended
-but not required — the PWA works fully offline.
+Every vault syncs — there is deliberately no offline-only mode. You need a
+server to install the app in the first place, and browser storage alone can be
+cleared by the browser or the user at any time, which would make an
+offline-only vault depend entirely on the user remembering to export backups.
+The server is the vault's off-device backup, and it only ever holds ciphertext.
+Offline *operation* is unaffected: once installed, the PWA works fully offline
+and catches up when the server returns.
 
 Server hardening (in `main.go` — keep these when touching handlers):
 
@@ -270,11 +287,20 @@ immune to device failure / ransomware.
 Supporting flows the above depends on:
 
 - **Unlock / first run**: the whole app sits behind a lock gate; nothing is
-  shown or decrypted until unlocked. On a fresh device with sync on, the gate
-  is a **Connect** step (join an existing vault by its Vault ID + token, or
-  start a new one, or restore from a backup file); creating a new vault mints a
-  Vault ID and shows it once on a welcome step. On later launches the gate is
-  just the unlock prompt. See Public Use for the Vault ID model.
+  shown or decrypted until unlocked. On a device with no vaults the gate is a
+  **Connect** step (join an existing vault by its Vault ID + token, or start a
+  new one, or restore from a backup file); creating a new vault mints a Vault
+  ID and shows it once on a welcome step. "Start a new vault" probes the server
+  first (with the *typed* token, even empty) and refuses if it is unreachable
+  or rejects the token — with no offline-only mode there is no fallback to
+  drop into. On later launches the gate is the unlock prompt for the active
+  vault (labelled with its name when the device holds several); a **Switch
+  vault** link opens the picker, whose "Add another vault" reuses the connect
+  step (which then *adds* a vault instead of clobbering — it selects the id
+  first and registers it only after the server confirms it exists). A setup
+  link opened on a device that already has vaults also routes to connect,
+  prefilled — that is the add-another-vault gesture. See Public Use for the
+  Vault ID model.
 - **Add / edit / delete**: an add button creates a new entry; the record modal
   has edit and delete actions. Deletes are tombstones (see the data model).
   Destructive prompts (delete, restore, print recovery sheet) use the in-app
@@ -296,15 +322,19 @@ Supporting flows the above depends on:
   list/search/count and never raises a sync conflict (name-vs-name auto-merges
   last-writer-wins in `applyPulled`). Two layers hold it: `vault.js` (the synced
   encrypted copy) and `web/js/app.js` — the shell, which owns the `<link
-  rel="manifest">` + `<title>` and keeps a local `localStorage vaultName` mirror
-  for use before unlock (the manifest is set on every load). app.js drives the
+  rel="manifest">` + `<title>` and keeps a local `localStorage vaultName:<id>`
+  mirror per vault for use before unlock (the lock screen and picker label
+  vaults from it; the manifest is set on every load). app.js drives the
   installed-app name via a **client-generated manifest** (a `blob:` URL with the
   name baked in) so the name never reaches the server — preserving zero-knowledge
   even on shared/public servers. (There is deliberately no server-side manifest
   naming: it would be the one path leaking the plaintext name to the server.)
   Icon URLs in that manifest must be absolute (a blob URL has no base); its
-  `id`/`start_url` stay constant so a rename relabels the *same* app instead of
-  installing a duplicate. If a browser rejects a blob manifest, it falls back to
+  `id`/`start_url` are constant *per vault* (`origin/?vault=<id>`) so a rename
+  relabels the *same* app instead of installing a duplicate, while each vault
+  installs as its own app whose icon launches into its own vault (app.js adopts
+  the `?vault=` parameter at load, then strips it via `replaceState`). If a
+  browser rejects a blob manifest, it falls back to
   the static `manifest.webmanifest` (default name) — the user renames the icon
   once. iOS ignores the manifest for naming, so app.js also sets an
   `apple-mobile-web-app-title` meta from the name (the Add-to-Home-Screen sheet
@@ -320,7 +350,11 @@ The shared modules — `vault.js`, `totp.js`, `sync.js`, `argon2.min.js` — are
 copied from `web/js/` at build time, never checked in twice; web/js stays the
 single source of truth. `sync.js` gained a `serverUrl` config (localStorage,
 empty = same origin) because extension pages aren't same-origin with the Go
-server; the PWA path is unchanged.
+server; the PWA path is unchanged. The shared modules are multi-vault-capable,
+but the extension UI stays single-vault: its registry simply holds one vault
+(`ov:connect` sets the vault id first so the suffixed config keys have an id
+to land under), and sync.js's startup block reselects it after a browser
+restart.
 
 Architecture (all extension-specific code in `extension/`):
 
@@ -382,8 +416,9 @@ It uses such little resources than many people can share a server on a very
 low powered machine.
 
 **Multi-tenancy — the Vault ID.** Sharing works via a per-vault namespace key.
-Each vault mints a random **Vault ID** at creation (client-side, kept in
-localStorage as `vaultId`); the client sends it as `X-Vault-Id` on every
+Each vault mints a random **Vault ID** at creation (client-side; the ids a
+device holds live in the localStorage `vaults` registry, and the active one is
+`Vault.getActiveId()`); the client sends it as `X-Vault-Id` on every
 `/api/*` call, and the server scopes *all* storage by it — `entries` and `meta`
 are keyed by `vault_id`, and each vault has its own private `rev` sequence in
 the `revs` table. So unrelated people on one server get fully separate vaults
@@ -507,7 +542,9 @@ it would hang) and must keep doing so. The service worker also bypasses
 - `web/js/sync.js` is HTTP-only orchestration: `pull` (since a cursor) then
   `push` (optimistic concurrency), triggered on unlock, on a *genuine local
   edit* (debounced), on an SSE `changed` event, or manually. Config in
-  localStorage (`syncEnabled`, `syncToken`, `vaultId`); URLs are same-origin.
+  localStorage, suffixed per vault (`syncToken:<id>`, `serverUrl:<id>`);
+  sync.js also owns the vault registry (`vaults`, `currentVault`,
+  `listVaults`/`addVault`/`removeVault`/`selectVault`). URLs are same-origin.
   Sync is event-driven, NOT a poll — critically, `Vault.onChange` only schedules
   a sync when the change is a real local edit. `vault.js` `notifyChanged(local)`
   passes `true` only from `put`/`remove`/`importVault`; sync-applied refreshes

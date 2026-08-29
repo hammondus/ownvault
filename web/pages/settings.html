@@ -33,8 +33,9 @@
   <div class="card">
     <h2 class="card-title">Vault name</h2>
     <p class="card-note">A short label for this vault (e.g. Home, Work). It names
-      the installed app icon and shows on the lock screen. Encrypted and synced,
-      so your other devices inherit it — the server never sees it.</p>
+      the installed app icon and labels this vault on the lock screen and in the
+      vault picker. Encrypted and synced, so your other devices inherit it — the
+      server never sees it.</p>
     <div class="sync-row">
       <input id="vault-name" class="form-input" type="text" maxlength="30"
              placeholder="e.g. Home" autocomplete="off" autocapitalize="words">
@@ -75,11 +76,9 @@
     <h2 class="card-title">Sync</h2>
     <p class="card-note">Sync across devices through the Go server that served
       this app. Everything is end-to-end encrypted — the server only ever
-      stores ciphertext.</p>
-    <label class="setting-row">
-      <span>Enable sync</span>
-      <input id="sync-enable" type="checkbox">
-    </label>
+      stores ciphertext. The server is also this vault's off-device backup, so
+      sync is always on; the app still works with the server unreachable and
+      catches up when it returns.</p>
     <div class="form-row">
       <span class="form-label">Access token (only if your server requires one)</span>
       <div class="sync-row">
@@ -197,9 +196,10 @@
 
   <div class="card">
     <h2 class="card-title">Remove from this device</h2>
-    <p class="card-note">Deletes the vault and all app settings from this
-      browser, returning it to a first-run state. Only this device is affected —
-      the server's copy (if you sync) and your other devices keep everything.</p>
+    <p class="card-note">Deletes this vault and its settings from this browser.
+      Other vaults on this device are untouched; removing the last vault returns
+      the browser to a first-run state. Only this device is affected — the
+      server's copy and your other devices keep everything.</p>
     <p class="card-note card-warn">⚠️ If this vault doesn't sync, or has unsynced
       changes, they are gone for good — sync or export a backup first. The
       installed app icon can't remove itself; delete it from your browser or

@@ -421,6 +421,15 @@ body.locked {
   font-size: 0.85rem;
 }
 
+/* The field an error is actually about. Set by vaultui.js markInvalid() next to
+   the message, so "enter your Vault ID" points at a box instead of leaving the
+   user to guess which of the two it means. Same hue as .lock-error, and the
+   ring (not just a border colour) stays visible for colour-blind users. */
+.lock-input.invalid {
+  border-color: #ffb4a8;
+  box-shadow: 0 0 0 3px rgba(255, 180, 168, 0.18);
+}
+
 /* Read-only Vault ID on the welcome step: monospace + wraps so the full id
    is visible and tap-selectable. */
 .lock-vaultid {
@@ -500,6 +509,13 @@ body.locked {
   font-weight: 600;
 }
 
+/* display:block below would override the [hidden] attribute (same trap as
+   .lock-screen above), and several lock links are conditionally revealed
+   (#connect-scan, #unlock-switch, #connect-back) — so restore it. */
+.lock-link[hidden] {
+  display: none;
+}
+
 .lock-link {
   display: block;
   width: 100%;
@@ -511,6 +527,31 @@ body.locked {
   font-size: 0.85rem;
   text-decoration: underline;
   cursor: pointer;
+}
+
+/* Vault picker on the lock gate: one tappable row per vault on this device.
+   Rows echo .lock-input's box styling so the gate stays one visual family. */
+.picker-list {
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.picker-list button {
+  display: block;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.picker-list button:active {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 /* ---------- Passwords screen ---------- */

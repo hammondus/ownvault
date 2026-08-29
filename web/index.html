@@ -59,8 +59,9 @@
   <!-- Shown (via body.offline) only while there is no connection -->
   <div class="offline-ribbon" role="status">Offline</div>
 
-  <!-- Lock gate: covers the app until the vault is unlocked. vaultui.js shows
-       the create form on first run, otherwise the unlock form. -->
+  <!-- Lock gate: covers the app until a vault is unlocked. vaultui.js picks
+       the step: connect on a device with no vaults, otherwise unlock of the
+       active vault, with a picker to switch between vaults on this device. -->
   <div id="lock-screen" class="lock-screen" hidden>
     <div class="lock-card">
       <div class="lock-logo">🔐</div>
@@ -84,12 +85,23 @@
         <button id="create-restore" class="lock-link" type="button">Restore from a backup file</button>
       </form>
       <form id="unlock-form" class="lock-form" hidden>
+        <h2 id="unlock-vault-name" class="lock-vault-name" hidden></h2>
         <p class="lock-lead">Enter your master password to unlock.</p>
         <input id="unlock-pw" class="lock-input" type="password"
                placeholder="Master password" autocomplete="current-password">
         <p id="unlock-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Unlock</button>
+        <!-- Also the road to "Add another vault", so shown whenever a vault
+             exists (i.e. always on the unlock step). -->
+        <button id="unlock-switch" class="lock-link" type="button" hidden>Switch or add vault</button>
       </form>
+      <!-- Several vaults on this device: pick which one to unlock. vaultui.js
+           fills the list from the registry (Sync.listVaults). -->
+      <div id="picker-panel" class="lock-form" hidden>
+        <p class="lock-lead">Choose a vault to unlock.</p>
+        <ul id="picker-list" class="picker-list"></ul>
+        <button id="picker-add" class="lock-link" type="button">Add another vault</button>
+      </div>
       <!-- Shown on a fresh device with sync on: join an existing vault by its
            id (multi-device / joining someone's shared server), or start a new
            one. See vaultui.js startGate / handleConnect. -->
@@ -108,24 +120,21 @@
         <button id="connect-scan" class="lock-link" type="button" hidden>Scan setup code with the camera</button>
         <button id="connect-create" class="lock-link" type="button">Start a new vault instead</button>
         <button id="connect-restore" class="lock-link" type="button">Restore from a backup file</button>
-        <button id="connect-offline" class="lock-link" type="button">Use offline only (no sync)</button>
+        <!-- Revealed by showLock when this device already holds vaults. -->
+        <button id="connect-back" class="lock-link" type="button" hidden>Back to your vaults</button>
       </form>
       <!-- Shown once, right after a new vault is created: surface the Vault ID so
            the user can connect other devices to this same vault. -->
       <div id="welcome-panel" class="lock-form" hidden>
         <h2 id="welcome-name" class="lock-vault-name" hidden></h2>
-        <!-- Sync vaults: surface the Vault ID for connecting other devices. -->
-        <div id="welcome-sync">
-          <p class="lock-lead">Your vault is ready. To sync another device to
-            <strong>this</strong> vault, connect it using the Vault ID below.</p>
-          <input id="welcome-vault-id" class="lock-input lock-vaultid" type="text"
-                 readonly aria-label="Vault ID">
-          <button id="welcome-copy" class="btn btn-ghost lock-btn" type="button">Copy Vault ID</button>
-          <p class="lock-hint">You can always find it again in Settings → Sync. It
-            isn't a secret — your master password is what protects the vault.</p>
-        </div>
-        <!-- Offline-only vaults get a plain lead in place of the sync block. -->
-        <p id="welcome-offline-lead" class="lock-lead" hidden>Your vault is ready.</p>
+        <!-- Surface the Vault ID so other devices can connect. -->
+        <p class="lock-lead">Your vault is ready. To sync another device to
+          <strong>this</strong> vault, connect it using the Vault ID below.</p>
+        <input id="welcome-vault-id" class="lock-input lock-vaultid" type="text"
+               readonly aria-label="Vault ID">
+        <button id="welcome-copy" class="btn btn-ghost lock-btn" type="button">Copy Vault ID</button>
+        <p class="lock-hint">You can always find it again in Settings → Sync. It
+          isn't a secret — your master password is what protects the vault.</p>
         <!-- Install as a PWA. The browser's own install control is easy to miss,
              so we offer it explicitly here. Shown only when installable and not
              already installed; iOS Safari has no prompt API, so it gets manual

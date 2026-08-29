@@ -42,12 +42,11 @@
   // gets manual Add-to-Home-Screen steps instead. See updateInstallUI.
   var deferredInstallPrompt = null;
 
+  // The shell owns display-mode detection (it also drives the manifest and the
+  // page title from it). Guard for App in case this module is ever loaded
+  // without the shell.
   function isStandalone() {
-    return (
-      (window.matchMedia &&
-        window.matchMedia("(display-mode: standalone)").matches) ||
-      window.navigator.standalone === true
-    );
+    return !!(window.App && App.isStandalone());
   }
 
   function isIOS() {
@@ -161,6 +160,33 @@
     if (node) node.hidden = !on;
   }
 
+  // Point an error message at the field it is about. Every lock-gate error is
+  // a sentence about one input ("enter your Vault ID", "token required"), and
+  // the connect form has two inputs whose roles are easy to mix up, so the
+  // message alone leaves the user guessing. Focus follows the highlight: the
+  // fix is always "type here". aria-invalid carries the same fact to a screen
+  // reader, which can't see the ring.
+  function markInvalid(id) {
+    var f = byId(id);
+    if (!f) return;
+    f.classList.add("invalid");
+    f.setAttribute("aria-invalid", "true");
+    f.focus();
+  }
+
+  function clearInvalid(node) {
+    if (!node || !node.classList) return;
+    node.classList.remove("invalid");
+    node.removeAttribute("aria-invalid");
+  }
+
+  // Reset every highlight under the lock screen. Called whenever a fresh
+  // attempt starts, so a stale ring never outlives the message that set it.
+  function clearLockInvalid() {
+    var fields = document.querySelectorAll("#lock-screen .lock-input.invalid");
+    for (var i = 0; i < fields.length; i++) clearInvalid(fields[i]);
+  }
+
   // WebCrypto (crypto.subtle) only exists in a secure context. Plain HTTP to a
   // LAN IP — the usual way people first hit the app from a phone — is NOT secure,
   // so subtle is undefined and every unlock/create would throw deep in the crypto
@@ -214,31 +240,73 @@
 
   /* ==================== lock gate ==================== */
 
+  // First 8 chars of a vault id: enough to tell vaults apart in the picker
+  // when one has no name yet (ids are random UUIDs/hex).
+  function shortId(id) {
+    return (id || "").slice(0, 8) + "…";
+  }
+
+  function vaultLabel(id) {
+    return (window.App && App.getVaultName(id)) || shortId(id);
+  }
+
   function showLock(mode) {
+    var vaults = window.Sync ? Sync.listVaults() : [];
     document.body.classList.add("locked");
     show(byId("lock-screen"), true);
     show(byId("create-form"), mode === "create");
     show(byId("unlock-form"), mode === "unlock");
     show(byId("connect-form"), mode === "connect");
     show(byId("welcome-panel"), mode === "welcome");
+    show(byId("picker-panel"), mode === "picker");
     show(byId("create-error"), false);
     show(byId("unlock-error"), false);
     show(byId("connect-error"), false);
     show(byId("restore-msg"), false);
+    clearLockInvalid();
     stopScan(); // reaching the gate mid-scan (connect or 2FA) must release the camera
     show(
       byId("connect-scan"),
       mode === "connect" &&
         !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
     );
+    // A device with several vaults says WHICH vault this password prompt is
+    // for, and offers the picker; connect gets a way back to it.
+    if (mode === "unlock") {
+      var un = byId("unlock-vault-name");
+      if (un) {
+        // The name whenever there is one; the short id only when several
+        // vaults make "which one?" a real question.
+        var lbl = window.App ? App.getVaultName() : "";
+        if (!lbl && vaults.length > 1 && window.Sync) lbl = shortId(Sync.getVaultId());
+        un.textContent = lbl;
+        show(un, !!lbl);
+      }
+      // Always offered: the picker is also the only road to "Add another
+      // vault", so a single-vault device needs the link too.
+      show(byId("unlock-switch"), vaults.length > 0);
+    }
+    show(byId("connect-back"), mode === "connect" && vaults.length > 0);
+    if (mode === "picker") {
+      var ul = byId("picker-list");
+      if (ul) {
+        ul.textContent = ""; // rebuild: names/registry may have changed
+        vaults.forEach(function (vid) {
+          var li = document.createElement("li");
+          var b = document.createElement("button");
+          b.type = "button";
+          b.setAttribute("data-vault-id", vid);
+          b.textContent = vaultLabel(vid);
+          li.appendChild(b);
+          ul.appendChild(li);
+        });
+      }
+    }
     // The welcome step surfaces the freshly created vault's id (sync vaults
     // only) and offers to install the app.
     if (mode === "welcome") {
-      var syncing = !!(window.Sync && Sync.isEnabled());
-      show(byId("welcome-sync"), syncing);
-      show(byId("welcome-offline-lead"), !syncing);
       var wid = byId("welcome-vault-id");
-      if (wid) wid.value = syncing ? Sync.getVaultId() : "";
+      if (wid) wid.value = window.Sync ? Sync.getVaultId() : "";
       var wname = byId("welcome-name");
       var vname = window.App ? App.getVaultName() : "";
       if (wname) {
@@ -260,7 +328,10 @@
         : mode === "connect" ? "connect-id"
         : mode === "welcome" ? "welcome-continue"
         : "unlock-pw";
-    var focus = byId(focusId);
+    var focus =
+      mode === "picker"
+        ? byId("picker-list").querySelector("button")
+        : byId(focusId);
     if (focus) {
       setTimeout(function () {
         focus.focus();
@@ -415,24 +486,24 @@
   }
 
   function startGate() {
-    Vault.isInitialized().then(function (exists) {
-      if (exists) {
-        showLock("unlock");
-        prefillFromHash(false); // still strip a setup link's fragment
-        return;
-      }
-      // Fresh device. With namespacing there is no single "the vault" to find,
-      // so we can't silently bootstrap — the user either supplies an existing
-      // Vault ID (connect) or starts a new vault. Offline vaults skip straight
-      // to create.
-      if (window.Sync && Sync.isEnabled()) {
-        showLock("connect");
-        prefillFromHash(true);
-      } else {
-        showLock("create");
-        prefillFromHash(false);
-      }
-    });
+    // A setup link's fragment always routes to connect, even on a device
+    // that already has vaults — opening one IS the add-another-vault
+    // gesture. (An id the device already holds is caught by handleConnect,
+    // which just selects it.)
+    var hash = window.location.hash;
+    var hasCode =
+      hash && hash.length > 1 && window.Sync && !!Sync.parseSetupCode(hash.slice(1));
+    if (hasCode || !(window.Sync && Sync.listVaults().length)) {
+      // No vaults on this device (or an incoming code): the user supplies an
+      // existing Vault ID (connect), starts a new vault, or restores.
+      showLock("connect");
+      prefillFromHash(true);
+      return;
+    }
+    // Straight to unlock of the active vault (selected at load from
+    // currentVault or the icon's ?vault=); the picker is one tap away.
+    showLock("unlock");
+    prefillFromHash(false); // strip a fragment that didn't parse
   }
 
   // A setup link (the QR's URL form) lands here with the code in the fragment
@@ -453,9 +524,13 @@
     }
   }
 
-  // Connect this device to an existing vault: store its id (+ token), then pull.
-  // Success (server had that vault's wrapped-key record) routes to unlock; a bad
-  // token or unknown id reports inline so the user can fix it.
+  // Connect this device to an existing vault: select its namespace, store the
+  // token under it, then pull. Success (server had that vault's wrapped-key
+  // record) registers the vault and routes to unlock; a bad token or unknown
+  // id reports inline so the user can fix it. An id this device already holds
+  // takes the same path on purpose — the pull is a cheap incremental for an
+  // intact vault, and it restores the meta record if the browser evicted the
+  // vault's IndexedDB (localStorage tends to outlive IndexedDB).
   function handleConnect(e) {
     e.preventDefault();
     var err = byId("connect-error");
@@ -463,10 +538,12 @@
       showLock("create");
       return;
     }
+    clearLockInvalid();
     var id = byId("connect-id").value.trim();
     if (!id) {
       err.textContent = "Enter your setup code or Vault ID, or start a new vault.";
       show(err, true);
+      markInvalid("connect-id");
       return;
     }
     // A pasted setup code carries the token too, so it wins over the
@@ -478,26 +555,52 @@
         err.textContent =
           "That setup code is for " + code.url + " — open the app there to connect.";
         show(err, true);
+        markInvalid("connect-id");
         return;
       }
       id = code.vaultId;
-      Sync.setToken(code.token);
-    } else {
-      Sync.setToken(byId("connect-token").value.trim());
     }
-    Sync.setVaultId(id);
+    var known = Sync.listVaults().indexOf(id) >= 0;
+    var prev = Sync.getVaultId();
+    // Select BEFORE storing the token so it lands under this vault's key.
+    // Registration waits for a successful pull — selecting alone must not
+    // leave a ghost vault if the id turns out not to exist.
+    Sync.selectVault(id);
+    var typed = byId("connect-token").value.trim();
+    if (code) {
+      Sync.setToken(code.token);
+    } else if (!known || typed) {
+      // For a vault already on this device an empty field means "keep the
+      // stored token", not "erase it".
+      Sync.setToken(typed);
+    }
     Sync.bootstrap().then(function (res) {
       if (res.exists) {
         // The vault name is inherited from the vault itself on first unlock
         // (reconcileVaultName), so there's nothing to ask for here.
+        Sync.addVault(id);
+        if (window.App) App.refreshVaultUI();
         showLock("unlock");
       } else if (res.needsAuth) {
+        // Stay on this vault so fixing the token and resubmitting just works.
         err.textContent = "Access token required or incorrect.";
         show(err, true);
+        markInvalid("connect-token");
       } else {
+        // Unknown id on this server. For a NEW id, undo the probe's traces
+        // (the empty DB the pull created, the config stored above) and fall
+        // back to the previously active vault; a vault already registered on
+        // this device is left alone — it exists here even if the server has
+        // lost it.
+        if (!known) {
+          Vault.wipeLocal();
+          Sync.removeVault(id);
+          if (prev) Sync.selectVault(prev);
+        }
         err.textContent =
           "No vault with that ID on this server. Check the ID, or start a new vault.";
         show(err, true);
+        markInvalid("connect-id");
       }
     });
   }
@@ -519,11 +622,15 @@
     }
     var err = byId("connect-error");
     show(err, false);
-    Sync.setToken(byId("connect-token").value.trim());
-    Sync.checkAuth().then(function (res) {
+    clearLockInvalid();
+    // Probe the TYPED token (even empty — that's what the new vault will
+    // store) before minting anything, so a refused or unreachable server
+    // leaves no half-configured vault behind.
+    var typed = byId("connect-token").value.trim();
+    Sync.checkAuth(typed).then(function (res) {
       if (res.offline) {
         err.textContent =
-          "Can't reach the sync server. Check your connection, or use offline only (no sync).";
+          "Can't reach the sync server. Check your connection, then try again.";
         show(err, true);
         return;
       }
@@ -531,21 +638,15 @@
         err.textContent =
           "This server requires an access token (missing or incorrect). Enter it above, then start the new vault.";
         show(err, true);
+        markInvalid("connect-token");
         return;
       }
-      Sync.setVaultId(Sync.newVaultId());
+      // Select but do NOT register yet: an abandoned create must not leave a
+      // ghost vault in the picker. handleCreate registers on success.
+      Sync.selectVault(Sync.newVaultId());
+      Sync.setToken(typed);
       showLock("create");
     });
-  }
-
-  // "Use offline only": no server at all. Disable sync so we never push, and
-  // still mint an id so enabling sync later just works.
-  function handleConnectOffline() {
-    if (window.Sync) {
-      Sync.setEnabled(false);
-      Sync.ensureVaultId();
-    }
-    showLock("create");
   }
 
   // Recovery path from the lock gate (no vault to unlock yet): pick an encrypted
@@ -565,7 +666,11 @@
     reader.onload = function () {
       Vault.importVault(String(reader.result)).then(
         function (res) {
-          if (res.vaultId && window.Sync) Sync.setVaultId(res.vaultId);
+          // importVault already switched to the backup's own vault; register
+          // it so the picker and the next launch know it.
+          hadEntries = false; // the lock-loop guard describes the old vault
+          if (window.Sync) Sync.setVaultId(res.vaultId);
+          if (window.App) App.refreshVaultUI();
           // Backup restored -> a vault now exists locally; unlock with its
           // master password. showLock clears the restore message.
           showLock("unlock");
@@ -646,11 +751,15 @@
     if (window.Sync) Sync.ensureVaultId();
     var name = byId("create-name").value.trim();
     Vault.create(pw).then(function () {
+      // The vault now exists: register it so the picker and the next launch
+      // know it (the connect screen deliberately selects without registering).
+      if (window.Sync) Sync.addVault(Sync.getVaultId());
       // Adopt the vault name: labels the installed app icon + lock screen (App)
       // and stores it as an encrypted, synced setting (Vault) so other devices
       // inherit it. Applied before the welcome step so the install button there
       // already advertises the chosen name in the manifest.
       if (name) persistVaultName(name);
+      else if (window.App) App.refreshVaultUI(); // manifest gets the new id
       // Show the welcome step: it surfaces the Vault ID (sync vaults only, so
       // other devices can connect — offline vaults have no server yet, and it's
       // always in Settings later) and offers to install the app.
@@ -1515,8 +1624,6 @@
     var sel = byId("clip-clear-select");
     if (sel) sel.value = String(clipClearMs() / 1000);
     if (window.Sync) {
-      var en = byId("sync-enable");
-      if (en) en.checked = Sync.isEnabled();
       var tok = byId("sync-token");
       if (tok) tok.value = Sync.getToken();
       var st = byId("sync-status");
@@ -1647,11 +1754,15 @@
   });
 
   // Lock overlay forms (persistent chrome).
+  // Typing in a highlighted field is the fix, so drop the highlight on the
+  // first keystroke rather than making the user re-submit to clear it.
+  byId("lock-screen").addEventListener("input", function (e) {
+    clearInvalid(e.target);
+  });
   byId("create-form").addEventListener("submit", handleCreate);
   byId("unlock-form").addEventListener("submit", handleUnlock);
   byId("connect-form").addEventListener("submit", handleConnect);
   byId("connect-create").addEventListener("click", handleConnectCreate);
-  byId("connect-offline").addEventListener("click", handleConnectOffline);
   byId("connect-scan").addEventListener("click", startConnectScan);
   byId("scan-cancel").addEventListener("click", stopScan);
   byId("create-restore").addEventListener("click", openRestore);
@@ -1660,6 +1771,29 @@
   byId("welcome-continue").addEventListener("click", afterUnlock);
   byId("welcome-copy").addEventListener("click", function () {
     if (window.Sync) copyValue(Sync.getVaultId(), false);
+  });
+  // Vault picker: switch which vault the unlock prompt targets. Everything
+  // here happens locked, so switching is only a matter of re-pointing the
+  // modules and the manifest at the chosen vault.
+  byId("unlock-switch").addEventListener("click", function () {
+    showLock("picker");
+  });
+  byId("picker-add").addEventListener("click", function () {
+    showLock("connect");
+  });
+  byId("connect-back").addEventListener("click", function () {
+    showLock("picker");
+  });
+  byId("picker-list").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-vault-id]");
+    if (!b) return;
+    // Cross-vault state must not leak: hadEntries feeds the "key changed
+    // under us" lock-loop guard in loadEntries and describes the PREVIOUS
+    // vault's session.
+    hadEntries = false;
+    Sync.selectVault(b.getAttribute("data-vault-id"));
+    if (window.App) App.refreshVaultUI();
+    showLock("unlock");
   });
   // Install button (welcome step + Settings card) — delegated on body so the one
   // handler covers both the persistent welcome chrome and the swapped-in
@@ -1832,25 +1966,38 @@
       });
   }
 
-  // Settings "Remove from this device": wipe everything this origin holds —
-  // IndexedDB vault, all localStorage (sync config, vault name, UI prefs),
-  // service worker + caches — then reload into the first-run gate. This is the
-  // buildable half of "uninstall": no web API can remove the installed icon,
-  // but the icon without the data is an empty shell.
+  // Settings "Remove from this device": delete the ACTIVE vault's database
+  // and config from this browser, then land on the next vault's lock gate.
+  // Removing the LAST vault escalates to the full teardown — all localStorage
+  // (UI prefs included), service worker + caches — back to the first-run
+  // gate. That is the buildable half of "uninstall": no web API can remove an
+  // installed icon, but the icon without the data is an empty shell.
   function removeFromDevice() {
+    var last = !window.Sync || Sync.listVaults().length <= 1;
     confirmDialog({
       title: "Remove vault from this device?",
       message:
-        "The vault and all settings are deleted from this browser only. " +
-        "Unsynced changes are lost for good. The app icon stays until you " +
-        "remove it from your browser or home screen.",
+        "This vault is deleted from this browser only" +
+        (last ? "" : " — other vaults on this device are untouched") +
+        ". Unsynced changes are lost for good. The app icon stays until " +
+        "you remove it from your browser or home screen.",
       confirmText: "Remove",
       danger: true
     }).then(function (ok) {
       if (!ok) return;
       if (window.Sync) Sync.stop();
+      var id = window.Sync ? Sync.getVaultId() : "";
       Vault.wipeLocal()
         .then(function () {
+          if (window.Sync) Sync.removeVault(id);
+          var rest = window.Sync ? Sync.listVaults() : [];
+          if (rest.length) {
+            // Vaults remain: select the next one and reload into its gate
+            // (the reload also re-points the manifest and title cleanly).
+            Sync.selectVault(rest[0]);
+            location.replace("/");
+            return;
+          }
           try {
             localStorage.clear();
           } catch (e) {
@@ -1881,10 +2028,11 @@
           }
           // Best effort on SW/caches: even if one fails, the vault and config
           // are already gone, so always land back on the fresh gate.
-          return Promise.all(jobs).catch(function () {});
-        })
-        .then(function () {
-          location.reload();
+          return Promise.all(jobs)
+            .catch(function () {})
+            .then(function () {
+              location.reload();
+            });
         });
     });
   }
@@ -1969,10 +2117,6 @@
       }
       return;
     }
-    if (e.target.id === "sync-enable") {
-      if (window.Sync) Sync.setEnabled(e.target.checked);
-      return;
-    }
     if (e.target.id === "sync-token") {
       if (window.Sync) {
         Sync.setToken(e.target.value.trim());
@@ -1990,14 +2134,11 @@
     input.value = ""; // reset now so re-selecting the same file re-fires change
     if (!file) return;
     var warn =
-      "It replaces this device's vault with the backup's contents.";
-    if (!window.Sync || Sync.isEnabled()) {
-      warn +=
-        " Because sync is on, the backup's entries also overwrite the matching " +
-        "ones on the server and your other devices (entries that exist only on " +
-        "the server are kept).";
-    }
-    warn += "\n\nThis can't be undone.";
+      "It restores the vault the backup was exported from — which may not " +
+      "be the vault currently open — replacing that vault's contents on " +
+      "this device. The backup's entries also overwrite the matching ones " +
+      "on the server and your other devices (entries that exist only on " +
+      "the server are kept).\n\nThis can't be undone.";
     confirmDialog({
       title: "Restore this backup?",
       message: warn,
@@ -2008,10 +2149,12 @@
       reader.onload = function () {
         Vault.importVault(String(reader.result)).then(
           function (res) {
-            // Reattach to the vault the backup came from (v2 backups), so the
-            // restored device rejoins the same server namespace and keeps syncing
-            // with any surviving devices instead of forking a new vault.
-            if (res.vaultId && window.Sync) Sync.setVaultId(res.vaultId);
+            // importVault switched to the backup's own vault; register it so
+            // the restored device rejoins that server namespace and keeps
+            // syncing with any surviving devices instead of forking.
+            hadEntries = false; // the lock-loop guard describes the old vault
+            if (window.Sync) Sync.setVaultId(res.vaultId);
+            if (window.App) App.refreshVaultUI();
             settingsMsg("backup-msg", "Imported " + res.entries + " entries. Unlock with that backup's password.", false);
             lockNow();
           },

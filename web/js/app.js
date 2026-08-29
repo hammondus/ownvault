@@ -37,23 +37,49 @@
   applyScheme(savedScheme());
 
   /* ==================== PWA / vault name ==================== */
-  // A short local nickname for this vault ("Home", "Work"). It labels the
-  // installed app icon and the lock screen. It is stored ONLY on this device —
-  // never sent to a sync server — so the zero-knowledge property holds even on
-  // a shared public server. Each vault lives on its own origin (its own server),
-  // so one origin = one name; we just re-apply it on every load, which also
-  // sidesteps the timing quirk where the browser captures the manifest name
-  // before the user has typed one.
+  // A short nickname per vault ("Home", "Work"). It labels the installed app
+  // icon, the lock screen, and the vault picker. This is the plaintext
+  // on-device mirror of the vault's encrypted name — never sent to a sync
+  // server, so the zero-knowledge property holds even on a shared public
+  // server. One hostname can hold several vaults, so the key is suffixed per
+  // vault; re-applying the active vault's name on every load sidesteps the
+  // timing quirk where the browser captures the manifest name before the
+  // user has typed one.
 
   var VAULT_NAME_KEY = "vaultName";
   var manifestBlobUrl = null;
 
-  function getVaultName() {
+  function nameKey(id) {
+    return VAULT_NAME_KEY + ":" + id;
+  }
+
+  // Name of the given vault, defaulting to the active one; "" when there is
+  // no such name (or no active vault). The id argument lets the lock-gate
+  // picker label vaults other than the active one.
+  function getVaultName(id) {
+    id = id || (window.Sync ? Sync.getVaultId() : "");
+    if (!id) return "";
     try {
-      return localStorage.getItem(VAULT_NAME_KEY) || "";
+      return localStorage.getItem(nameKey(id)) || "";
     } catch (e) {
       return "";
     }
+  }
+
+  // Running as an installed app rather than a browser tab. Chromium reports
+  // this through display-mode; iOS Safari has its own flag. All three
+  // installed display modes count — a window-controls-overlay or minimal-ui
+  // install is as installed as a standalone one.
+  function isStandalone() {
+    var mq = window.matchMedia;
+    return (
+      (!!mq &&
+        (mq("(display-mode: standalone)").matches ||
+          mq("(display-mode: minimal-ui)").matches ||
+          mq("(display-mode: window-controls-overlay)").matches ||
+          mq("(display-mode: fullscreen)").matches)) ||
+      window.navigator.standalone === true
+    );
   }
 
   function setAppleTitle(value) {
@@ -72,17 +98,22 @@
   // Option A: point <link rel="manifest"> at a client-generated manifest that
   // carries the vault name. The name never leaves the device. Icons/URLs must be
   // ABSOLUTE — a blob: URL has no useful base to resolve "/icons/..." against.
-  // id + start_url stay constant so the browser treats every name as the SAME
-  // app (a rename relabels it; it doesn't install a duplicate).
+  // id + start_url are constant PER VAULT: a rename still relabels the same
+  // app (no duplicate install), while each vault installs as its own app,
+  // launching at /?vault=<id> so the icon reopens the right vault.
   function setBlobManifest(link, name) {
     var origin = location.origin;
+    var vaultUrl =
+      origin +
+      "/?vault=" +
+      encodeURIComponent(window.Sync ? Sync.getVaultId() : "");
     var manifest = {
-      id: origin + "/",
+      id: vaultUrl,
       name: name,
       short_name: name,
       description:
         "Own Vault: an offline-first, end-to-end encrypted password manager.",
-      start_url: origin + "/",
+      start_url: vaultUrl,
       scope: origin + "/",
       display: "standalone",
       background_color: "#f4f6f8",
@@ -115,9 +146,35 @@
     var name = getVaultName();
     setAppleTitle(name || "Own Vault");
     var link = document.querySelector('link[rel="manifest"]');
-    if (!link || !name) return; // no custom name yet -> keep the static manifest
-    setBlobManifest(link, name);
+    var vid = window.Sync ? Sync.getVaultId() : "";
+    if (!link || !vid) return; // no vault yet -> keep the static manifest
+    // Even an unnamed vault gets the blob manifest: two vaults must carry
+    // distinct manifest ids or installing the second replaces the first.
+    setBlobManifest(link, name || "Own Vault");
   }
+
+  // An installed vault icon launches at /?vault=<id> (its manifest's
+  // start_url). Adopt that vault for this tab, then strip the parameter —
+  // like the setup-code fragment, it must not linger in the URL or the
+  // history entry. An id not on this device (an icon outliving a removed
+  // vault) is ignored and the tab stays on the last-used vault. Runs before
+  // applyPwaName so the manifest reflects the launched vault.
+  (function () {
+    var m = /[?&]vault=([^&]+)/.exec(location.search);
+    if (!m) return;
+    var id = "";
+    try {
+      id = decodeURIComponent(m[1]);
+    } catch (e) {
+      /* malformed escape: treat as unknown */
+    }
+    if (id && window.Sync && Sync.listVaults().indexOf(id) >= 0) {
+      Sync.selectVault(id);
+    }
+    if (window.history && history.replaceState) {
+      history.replaceState(null, "", location.pathname + location.hash);
+    }
+  })();
 
   applyPwaName();
 
@@ -215,7 +272,12 @@
     navLinks.forEach(function (a) {
       a.classList.toggle("active", a === link);
     });
-    document.title = link.dataset.title + " - " + (getVaultName() || "Own Vault");
+    // In a tab the vault name is the only thing telling one vault's tab from
+    // another's, so it belongs in the title. An installed window already shows
+    // the manifest name in its own chrome and the browser prepends it to
+    // document.title, so appending it there reads "Home - Passwords - Home".
+    var name = isStandalone() ? "" : getVaultName() || "Own Vault";
+    document.title = name ? link.dataset.title + " - " + name : link.dataset.title;
   }
 
   // The drawer slides closed while the new content swaps in underneath —
@@ -551,12 +613,22 @@
   // <title>); vaultui.js drives it from the create/settings screens.
   window.App = {
     getVaultName: getVaultName,
+    isStandalone: isStandalone,
     setVaultName: function (name) {
-      try {
-        localStorage.setItem(VAULT_NAME_KEY, name || "");
-      } catch (e) { /* ignore */ }
+      var id = window.Sync ? Sync.getVaultId() : "";
+      if (id) {
+        try {
+          localStorage.setItem(nameKey(id), name || "");
+        } catch (e) { /* ignore */ }
+      }
       applyPwaName();
       syncUI(); // refresh the tab-title suffix immediately
+    },
+    // After a vault switch: re-point the manifest and title at the newly
+    // active vault (vaultui calls this alongside Sync.selectVault).
+    refreshVaultUI: function () {
+      applyPwaName();
+      syncUI();
     }
   };
 })();

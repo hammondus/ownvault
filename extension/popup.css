@@ -77,6 +77,15 @@ input[type="text"], input[type="password"], input[type="url"], input[type="searc
 .hint { color: var(--dim); font-size: 0.85rem; }
 .err { color: #c0392b; font-size: 0.85rem; }
 
+/* The field an error is actually about. Set by popup.js markInvalid(), which
+   also focuses it. Same hue as .err, and the ring (not just a border colour)
+   stays visible for colour-blind users. Mirrors .lock-input.invalid in the
+   PWA's style.css, in this popup's light palette. */
+input.invalid {
+  border-color: #c0392b;
+  box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.15);
+}
+
 .section-label {
   font-size: 0.7rem;
   text-transform: uppercase;

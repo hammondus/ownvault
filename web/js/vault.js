@@ -24,7 +24,7 @@
 window.Vault = (function () {
   "use strict";
 
-  var DB_NAME = "ownvault";
+  var DB_PREFIX = "ownvault-"; // one IndexedDB per vault: ownvault-<vaultId>
   var DB_VERSION = 1;
   var STORE_META = "meta";
   var STORE_ENTRIES = "entries";
@@ -74,7 +74,8 @@ window.Vault = (function () {
 
   var subtle = window.crypto.subtle;
 
-  var db = null; // IDBDatabase, opened lazily
+  var activeId = ""; // vault id this tab is pointed at; "" until use() runs
+  var db = null; // IDBDatabase for the active vault, opened lazily
   var vaultKey = null; // CryptoKey when unlocked, else null
   var writeAuth = null; // per-vault write credential, derived alongside vaultKey
   var changeCb = null; // notified after any entry mutation
@@ -115,10 +116,18 @@ window.Vault = (function () {
 
   /* ==================== IndexedDB ==================== */
 
+  function dbName() {
+    return DB_PREFIX + activeId;
+  }
+
   function openDB() {
     if (db) return Promise.resolve(db);
+    // Every storage path funnels through here (tx and the multi-store
+    // transactions), so this one guard keeps a tab with no selected vault
+    // from silently creating an "ownvault-" database.
+    if (!activeId) return Promise.reject(new Error("no active vault"));
     return new Promise(function (resolve, reject) {
-      var req = window.indexedDB.open(DB_NAME, DB_VERSION);
+      var req = window.indexedDB.open(dbName(), DB_VERSION);
       req.onupgradeneeded = function () {
         var d = req.result;
         if (!d.objectStoreNames.contains(STORE_META)) {
@@ -464,7 +473,35 @@ window.Vault = (function () {
     return Promise.resolve(false);
   }
 
+  // Point this tab at a vault's database. Locks first — at most one vault is
+  // ever unlocked — and drops the DB handle so the next open hits
+  // ownvault-<id>. Only ever called from the lock gate (or the equally-locked
+  // import path), so no transaction is in flight when the handle closes.
+  function use(id) {
+    id = id || "";
+    if (id === activeId) return;
+    lock();
+    if (db) {
+      try {
+        db.close();
+      } catch (e) {
+        /* ignore */
+      }
+      db = null;
+    }
+    activeId = id;
+  }
+
+  // "" when no vault is selected. Sync.getVaultId() delegates here: the
+  // active id IS the vault identity — there is no separate stored copy.
+  function getActiveId() {
+    return activeId;
+  }
+
   function isInitialized() {
+    // No selected vault reads as "not initialized", not an error: the first
+    // run of the extension (and a fresh browser) asks before any vault exists.
+    if (!activeId) return Promise.resolve(false);
     return metaGet().then(function (r) {
       return !!r;
     });
@@ -533,11 +570,12 @@ window.Vault = (function () {
     writeAuth = null;
   }
 
-  // Decommission this device: forget the keys, close the DB connection, and
-  // delete the whole database. The caller clears localStorage and reloads —
-  // there is no coming back except connect/restore. Resolves on onblocked too
-  // (another tab holding the DB open defers the delete until that tab closes;
-  // waiting here would hang the wipe behind a tab the user can't see).
+  // Remove the ACTIVE vault from this device: forget the keys, close the DB
+  // connection, and delete that vault's database. The caller removes the
+  // vault's localStorage keys (Sync.removeVault) — other vaults on the
+  // device are untouched. Resolves on onblocked too (another tab holding the
+  // DB open defers the delete until that tab closes; waiting here would hang
+  // the wipe behind a tab the user can't see).
   function wipeLocal() {
     lock();
     if (db) {
@@ -549,7 +587,7 @@ window.Vault = (function () {
       db = null;
     }
     return new Promise(function (resolve) {
-      var req = window.indexedDB.deleteDatabase(DB_NAME);
+      var req = window.indexedDB.deleteDatabase(dbName());
       req.onsuccess = req.onerror = req.onblocked = function () {
         resolve();
       };
@@ -1150,10 +1188,13 @@ window.Vault = (function () {
   // existing server meta win, so a restore of the same vault never reverts a
   // password change made elsewhere; only an empty server gets seeded from it.
   //
-  // Resolves to { entries, vaultId }: vaultId is the namespace recorded in the
-  // file (v2 backups; "" for older ones). The caller adopts it (Sync.setVaultId)
-  // so the restored device reattaches to the same server vault and the rebase
-  // above happens against that vault's live state.
+  // The restore lands in the backup's OWN vault: a v2 backup names its vault
+  // id and this function switches to that vault's database before writing —
+  // so restoring a backup of vault A while vault B is open restores A, and a
+  // backup matching an existing vault on the device restores that vault. A v1
+  // backup (no id) merges into the active vault, or gets a locally minted id
+  // on a tab with none. Resolves to { entries, vaultId }; vaultId is always
+  // non-empty and the caller registers + selects it (Sync.setVaultId).
   function importVault(text) {
     var doc;
     try {
@@ -1190,6 +1231,17 @@ window.Vault = (function () {
     } catch (e) {
       return Promise.reject(new Error("backup file is invalid or corrupted"));
     }
+    if (doc.vaultId) {
+      use(doc.vaultId); // no-op when the backup is of the active vault
+    } else if (!activeId) {
+      // v1 backup on a tab with no vault: mint a local namespace for it.
+      var rb = randomBytes(16);
+      var hex = "";
+      for (var bi = 0; bi < rb.length; bi++) {
+        hex += ("0" + rb[bi].toString(16)).slice(-2);
+      }
+      use(hex);
+    }
     lock();
     // Full reconcile next sync: forget the cursor so the pull returns the whole
     // server state to rebase against and to pick up server-only entries.
@@ -1205,7 +1257,7 @@ window.Vault = (function () {
         });
         t.oncomplete = function () {
           notifyChanged(true);
-          resolve({ entries: envs.length, vaultId: doc.vaultId || "" });
+          resolve({ entries: envs.length, vaultId: activeId });
         };
         t.onerror = function () {
           reject(t.error);
@@ -1226,11 +1278,15 @@ window.Vault = (function () {
   // sync engine (sync.js) never has to touch binary or crypto. The server
   // only ever sees ciphertext + server-assigned revs.
 
-  var CURSOR_KEY = "syncCursor"; // not secret: highest server rev pulled
+  // Not secret: highest server rev pulled, one per vault (each vault has its
+  // own rev sequence on the server, so cursors must not be shared).
+  function cursorKey() {
+    return "syncCursor:" + activeId;
+  }
 
   function getCursor() {
     try {
-      return parseInt(localStorage.getItem(CURSOR_KEY), 10) || 0;
+      return parseInt(localStorage.getItem(cursorKey()), 10) || 0;
     } catch (e) {
       return 0;
     }
@@ -1238,7 +1294,7 @@ window.Vault = (function () {
 
   function setCursor(rev) {
     try {
-      localStorage.setItem(CURSOR_KEY, String(rev || 0));
+      localStorage.setItem(cursorKey(), String(rev || 0));
     } catch (e) {
       /* ignore */
     }
@@ -1490,6 +1546,8 @@ window.Vault = (function () {
   }
 
   return {
+    use: use,
+    getActiveId: getActiveId,
     isInitialized: isInitialized,
     isUnlocked: isUnlocked,
     create: create,

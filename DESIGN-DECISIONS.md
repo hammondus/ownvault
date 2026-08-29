@@ -138,13 +138,16 @@ Two related Settings calls:
   web API for a page to uninstall a PWA — install has one, uninstall is
   browser chrome only. The wipe deletes what actually matters and what an
   icon-uninstall can leave behind (on desktop Chrome, site data survives
-  uninstall unless a checkbox is ticked): the IndexedDB vault, all
-  localStorage, the service worker, and caches — then reloads into the
-  first-run gate. `localStorage.clear()` over selective key removal, on
-  purpose: decommissioning wants first-run state, and a curated key list
-  would silently rot as keys are added. The confirm dialog owns the two
-  blunt truths: unsynced changes are gone for good, and the icon must be
-  removed by hand.
+  uninstall unless a checkbox is ticked). With multi-vault it is scoped to
+  the ACTIVE vault — its IndexedDB and its suffixed localStorage keys —
+  landing on the next vault's lock gate; removing the LAST vault escalates
+  to the original full teardown (`localStorage.clear()`, service worker,
+  caches) back to first-run state. `clear()` over a curated key list for
+  that final step, on purpose: decommissioning wants first-run state, and a
+  key list would silently rot as keys are added. There is no separate
+  "remove everything" button — removing vaults one at a time reaches the
+  teardown on the last one. The confirm dialog owns the two blunt truths:
+  unsynced changes are gone for good, and the icon must be removed by hand.
 
 ## Create gate probes server auth; only a 401 blocks (2026-08)
 
@@ -163,15 +166,143 @@ token. Choices within that:
   and no-token-server path; a field that is usually irrelevant invites
   confusion, and the connect screen already has the field — the gate just
   has to enforce it.
-- **An unreachable server blocks too, with a message pointing at "Use
-  offline only".** First instinct was to let it pass (offline-first), but
-  offline-first doesn't apply to initial setup: a fresh device loaded this
-  very page from the server, so the server was reachable moments ago. The
-  only offline route to the connect screen is a previously cached shell, and
-  a user genuinely creating offline has the explicit offline button — which
-  disables sync, so nothing 401s silently later. Blocking both outcomes
-  means a *synced* vault can only ever be created after the server
-  affirmatively accepted the token; there is no residual silent-401 gap.
+- **An unreachable server blocks too.** First instinct was to let it pass
+  (offline-first), but offline-first doesn't apply to initial setup: a fresh
+  device loaded this very page from the server, so the server was reachable
+  moments ago. The only offline route to the connect screen is a previously
+  cached shell. Blocking both outcomes means a vault can only ever be created
+  after the server affirmatively accepted the token; there is no residual
+  silent-401 gap. (This bullet originally offered "Use offline only" as the
+  escape hatch. That mode is gone — see below — so an unreachable server is
+  now simply a wall, and the message says to try again.)
+- **Errors highlight the field they are about, and only after a real
+  failure.** The connect screen carries two inputs whose roles are easy to
+  confuse, and which one you need depends on the action: Connect wants the
+  setup code or Vault ID, "Start a new vault instead" wants the access token.
+  A sentence under both boxes left the user to work out which one it meant,
+  so `markInvalid()` rings the field and focuses it. The highlight fires on
+  the failure, not on picking the action, because *proactive* highlighting
+  would be a lie on the common case: a server with no `-token` needs no token
+  at all, and ringing the field the moment you click "Start a new vault
+  instead" would demand a value that does not exist. The ring clears on the
+  first keystroke — typing there is always the fix.
+- **The extension popup does the same, and drops native form validation to do
+  it.** Its connect form has three fields, so the ambiguity is worse. It
+  previously leaned on `required` / `type=url`, which meant two error
+  vocabularies in one form: a native bubble for an empty field, the popup's
+  own `.err` line for anything the server said. The form is now `novalidate`
+  and `connectFieldError()` re-states those checks in the popup's voice. That
+  hand-rolled URL check has to stay — `Sync.setServerUrl` only trims, so a
+  schemeless address would otherwise become a relative fetch against the
+  extension's own origin. Two fields are ringed for "no vault found there",
+  not one: `bootstrap()` resolves identically whether the server answered
+  "no such vault" or was never reached, so naming a single culprit would be
+  a guess.
+
+## No offline-only mode (2026-08)
+
+The lock gate used to offer "Use offline only (no sync)", and Settings had an
+"Enable sync" checkbox. Both are gone; every vault syncs.
+
+The mode never made sense on its own terms. You need a reachable server to
+load the app and install it as a PWA in the first place, so a user choosing
+"offline only" has a server sitting right there, declining to use it. What
+they get in exchange is a vault whose only copy is IndexedDB — which the
+browser evicts under storage pressure, which "clear browsing data" wipes
+without singling out this app, and which a profile reset takes with it. That
+turns the vault into something that survives only as long as the user keeps
+exporting manual backups. Nobody reliably does.
+
+The privacy argument that would normally justify the mode doesn't apply here:
+the server is zero-knowledge, so syncing to it discloses nothing but entry
+count and update times. Offline-only was buying no confidentiality and
+selling durability.
+
+What is NOT removed is offline *operation*. The PWA still runs with the
+server down — add, edit, delete, unlock, read — and catches up on reconnect.
+The change is that a vault always has a server it belongs to, so "offline" is
+a temporary state rather than a configuration.
+
+Consequences worth knowing:
+
+- Creating a vault now requires a reachable server that accepts the token.
+  There is no fallback to drop into, so `handleConnectCreate`'s unreachable
+  branch is a hard stop.
+- `Sync.isEnabled()` / `setEnabled()` and the `syncEnabled` localStorage key
+  are deleted rather than stubbed to true. A stale `syncEnabled: "0"` left in
+  a browser from an older build is simply ignored — nothing reads the key —
+  so such a device starts syncing on its next load. That was a deliberate
+  call: those vaults already have a Vault ID (the old offline path minted one
+  precisely so enabling sync later would work), so the first sync claims it
+  by TOFU and the vault is protected without the user doing anything.
+
+## Page title: no vault name in an installed window (2026-08)
+
+`document.title` is `"<screen> - <vault name>"` — "Passwords - Home". In an
+installed PWA window, the browser prepends the manifest name to the document
+title, so the window read "Home - Passwords - Home".
+
+The shell now appends the vault name only when NOT running installed
+(`App.isStandalone()`). A browser tab keeps "Passwords - Home", because there
+the title is the only thing distinguishing one vault's tab from another's; an
+installed window gets a plain "Passwords" and the browser supplies the name.
+
+`isStandalone()` moved from vaultui.js to app.js and is exported on `window.App`
+— the shell owns the manifest, the title, and now the one definition of
+"installed". It also widened from `display-mode: standalone` alone to include
+`minimal-ui`, `window-controls-overlay`, and `fullscreen`, all of which are
+installed states; that also makes vaultui's install-prompt UI correct in those
+modes.
+
+## Multi-vault: several vaults on one hostname (2026-08)
+
+One client can hold several vaults ("Home" and "Work" on the same phone,
+against the same server or different ones). The layout:
+
+- **One IndexedDB per vault** — `ownvault-<vaultId>` — rather than one DB
+  with vault-scoped keys. The DB is the unit of atomicity (full re-encrypt
+  commits in one transaction) and the unit of deletion (remove-from-device
+  is `deleteDatabase`, not a filtered scan); sharing a DB would have
+  re-complicated both for no gain.
+- **Per-vault localStorage values are suffixed** — `syncToken:<id>`,
+  `serverUrl:<id>`, `syncCursor:<id>`, `vaultName:<id>` — plus a small
+  registry: `vaults` (JSON array of ids, display order) and `currentVault`
+  (last used). Device-wide prefs (`colorScheme`, `menuBtnPos`, `menuPinned`,
+  `clipClearSecs`) stay unsuffixed.
+- **One vault active at a time; the active vault is per-tab, in memory.**
+  `Vault`/`Sync` stay singletons; `Vault.use(id)` re-points them and locks
+  first, so at most one vault is ever unlocked and there is never a second
+  EventSource. `currentVault` is only *read* at page load (and only written
+  by an explicit selection), so two installed vault apps open in two windows
+  never fight over it — the last switch merely decides what a plain `/`
+  visit unlocks next. `Sync.getVaultId()` delegates to `Vault.getActiveId()`;
+  there is no separate stored id to drift.
+- **Each vault installs as its own app.** The client-generated manifest's
+  `id` and `start_url` are `origin/?vault=<id>` (scope stays `/`), so
+  installing vault B doesn't replace vault A's icon, and each icon launches
+  into its own vault (app.js adopts the `?vault=` parameter, then strips it
+  with `replaceState`, like the setup-code fragment). Renaming still
+  relabels the same app: the id is constant per vault. The service worker
+  needed nothing: every navigation already collapses to the one cached
+  shell, and the query parameter survives in `location` for app.js to read
+  offline.
+- **Registration is separate from selection.** Connect *selects* a vault id
+  (so its token lands under the right key and the probe pulls its
+  namespace) but only *registers* it after the server confirms the vault
+  exists — a typo'd id or an abandoned create leaves no ghost in the
+  picker. Connecting an id the device already holds re-runs the same
+  bootstrap on purpose: a cheap incremental pull normally, and a repair
+  path when the browser evicted that vault's IndexedDB (localStorage tends
+  to outlive IndexedDB, so the registry can name a vault whose DB is gone).
+- **Clean break, no migration.** The single-vault layout (`ownvault` DB,
+  unsuffixed keys) is simply ignored: at the time of the change there were
+  no users and no data. A stale dev profile clears site data by hand.
+- The lock gate gains a picker step (shown only via "Switch vault" — a
+  device boots straight into the last-used vault's unlock, keeping the
+  common one-vault case one step shorter), and restore-from-backup now
+  restores *the backup's own vault* (a v2 backup names its vault id;
+  `importVault` switches to that DB before writing) instead of overwriting
+  whichever vault happened to be open.
 
 ## Extension: offscreen document as the vault process (2026-08)
 
@@ -404,8 +535,9 @@ push.
 ## Credential storage and guess-rate limiting (2026-08)
 
 ### The sync token lives in `localStorage`, deliberately
-`syncToken` (the shared server secret, sent as `X-Vault-Token`) and `vaultId`
-sit in `localStorage` (`sync.js`). There is no session token anywhere: the
+`syncToken:<vaultId>` (the shared server secret, sent as `X-Vault-Token`) and
+the vault registry sit in `localStorage` (`sync.js`). There is no session
+token anywhere: the
 server issues nothing, and nothing expires. The usual "never put secrets in
 localStorage" advice targets XSS exfiltration, and the reasoning for keeping
 it here is that **the token is not a decryption key** — it gates *write*
@@ -421,9 +553,9 @@ and it would be attached to navigations the app doesn't control). The
 compensating control is the strict CSP — `script-src 'self'`, no inline, no
 eval — which is what makes an injection vector expensive in the first place.
 
-Known, accepted on-device leak: `vaultName` is plaintext in `localStorage`
-(`app.js`) by necessity, since the shell names the PWA icon and lock screen
-before any unlock can happen.
+Known, accepted on-device leak: `vaultName:<vaultId>` is plaintext in
+`localStorage` (`app.js`) by necessity, since the shell names the PWA icon,
+the lock screen, and the vault picker before any unlock can happen.
 
 ### No rate limiting on the master-password unlock — on purpose
 `handleUnlock` (`vaultui.js`) has no attempt counter, lockout, or backoff. A
