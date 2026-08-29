@@ -538,3 +538,34 @@ deployed devices, so version skew across devices cannot occur. Legacy
 *reads* still work (unprefixed blobs decrypt without AAD and are rebound on
 next write), so existing dev vaults are unaffected. If this ever matters
 post-release, the fix is a transitional writer flag, not a format change.
+
+## Clipboard wipe is a due time, not a timeout (2026-08)
+`navigator.clipboard.writeText` resolves only while the document has focus;
+Chrome rejects it with `NotAllowedError: Document is not focused`. The
+original wipe was a bare `setTimeout` whose rejection was swallowed, so it
+succeeded only when the user copied a password and then stayed on the ownvault
+tab — the one case where copying achieved nothing. In the case the feature
+exists for (copy, switch to the site, paste) the tab was backgrounded when the
+timer fired, the wipe was refused, and the password stayed on the clipboard
+indefinitely, while the toast had promised it would clear.
+
+Decision: track a *due time* (`clipWipeDue` in vaultui.js) rather than a
+one-shot timer. The wipe runs at whichever comes later, the deadline or the
+next return to the app — the timer, a `window` `focus`, and a
+`visibilitychange` all call the same idempotent `wipeClipboard`, which
+no-ops before the deadline and when the document is unfocused. A copy with no
+wipe (a TOTP code, the sync token) clears the pending wipe, because that copy
+has already overwritten the secret.
+
+Residual gap, accepted: a user who copies a password and never returns to the
+tab keeps it on the clipboard. No page API can write the clipboard from a tab
+that is not focused, so the PWA cannot close this. Two things outside the page
+can, and the gap is the reason both exist:
+
+- The **extension** already wipes from its offscreen document
+  (`execCommand` on a focused textarea, which Chrome permits there), so it
+  covers the unfocused-tab case for as long as the browser runs.
+- **Gatehouse** (`~/dev/gatehouse`, planning stage) would cover the remaining
+  case, a browser that quits before the deadline. Its concealed-write feature
+  is worth little here — only Windows enforces concealment — so auto-clear
+  after browser exit is the whole of its clipboard value to ownvault.

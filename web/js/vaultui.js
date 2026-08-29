@@ -33,6 +33,7 @@
   var searchTerm = "";
   var idleTimer = null;
   var clipTimer = null;
+  var clipWipeDue = 0; // when a pending clipboard wipe comes due; 0 = none owed
 
   /* ==================== PWA install ==================== */
   // Chromium fires beforeinstallprompt when the app is installable; we stash the
@@ -1414,23 +1415,42 @@
 
   // wipe: overwrite the clipboard after the configured delay (passwords and
   // recovery codes — long-lived secrets; TOTP codes expire on their own).
+  //
+  // writeText only resolves while the document has focus, and copying a
+  // password exists so the user can leave and paste it — so the timer nearly
+  // always fires on a backgrounded tab, where the wipe is refused. The wipe is
+  // therefore a *due time*, not a one-shot timeout: whichever comes later, the
+  // timer or the next return to the app, performs it. A user who never comes
+  // back keeps the secret on the clipboard; no page API can reach it from a
+  // tab that isn't focused. The extension's offscreen document can, and does.
+  function wipeClipboard() {
+    if (!clipWipeDue || Date.now() < clipWipeDue) return;
+    if (!document.hasFocus()) return; // retried on the focus/visibility events
+    clipWipeDue = 0;
+    // Can't verify the clipboard is still ours without a read prompt, so this
+    // overwrites whatever is there once the delay has run.
+    navigator.clipboard.writeText("").catch(function () {});
+  }
+
   function copyValue(value, wipe, label) {
     if (!navigator.clipboard) return;
     navigator.clipboard.writeText(value).then(function () {
       var ms = clipClearMs();
+      clearTimeout(clipTimer);
       if (wipe && ms > 0) {
         toast((label || "Password") + " copied — clears in " + ms / 1000 + "s");
-        clearTimeout(clipTimer);
-        clipTimer = setTimeout(function () {
-          // Best effort: overwrite the clipboard so a copied secret doesn't
-          // linger. Can't verify it's still ours without a read prompt.
-          navigator.clipboard.writeText("").catch(function () {});
-        }, ms);
+        clipWipeDue = Date.now() + ms;
+        clipTimer = setTimeout(wipeClipboard, ms);
       } else {
+        // This copy already overwrote whatever was owed a wipe.
+        clipWipeDue = 0;
         toast("Copied");
       }
     });
   }
+
+  window.addEventListener("focus", wipeClipboard);
+  document.addEventListener("visibilitychange", wipeClipboard);
 
   function toast(msg) {
     var t = byId("toast");
