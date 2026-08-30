@@ -24,6 +24,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -211,7 +212,7 @@ func nextRev(tx *sql.Tx, vault string) (int64, error) {
 func (s *store) maxRev(vault string) (int64, error) {
 	var rev int64
 	err := s.db.QueryRow(`SELECT rev FROM revs WHERE vault_id = ?`, vault).Scan(&rev)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	return rev, err
@@ -660,7 +661,7 @@ func checkWriteAuth(tx *sql.Tx, vault, token, newToken string) (bool, error) {
 	sum := sha256.Sum256([]byte(token))
 	var stored []byte
 	err := tx.QueryRow(`SELECT token_hash FROM vault_auth WHERE vault_id = ?`, vault).Scan(&stored)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		if newToken != "" { // claim with the newer credential when rotating
 			sum = sha256.Sum256([]byte(newToken))
 		}
@@ -759,7 +760,7 @@ func (s *store) handleMeta(h *hub) http.HandlerFunc {
 			var doc string
 			var rev int64
 			err := s.db.QueryRow(`SELECT doc, rev FROM meta WHERE vault_id = ?`, vault).Scan(&doc, &rev)
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				http.Error(w, "no meta", http.StatusNotFound)
 				return
 			}
@@ -902,7 +903,7 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 		for _, it := range body.Entries {
 			var curRev int64
 			err := tx.QueryRow(`SELECT rev FROM entries WHERE vault_id = ? AND id = ?`, vault, it.ID).Scan(&curRev)
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				curRev = 0
 			} else if err != nil {
 				http.Error(w, err.Error(), 500)
