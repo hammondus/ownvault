@@ -22,29 +22,31 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"html/template"
-	"io"
 	"io/fs"
 	"log"
-	"net"
 	"net/http"
 	"net/mail"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hammondus/mailer"
+	"github.com/hammondus/nitrokit"
 )
 
-//go:embed web templates
+// all: on templates is load-bearing, not decoration. A plain //go:embed
+// directive skips files whose names start with "_" or ".", and nitrokit's
+// template convention names partials with a leading underscore — so without
+// it _partials.html is missing from the binary and every page renders as a
+// 500 in production while dev, which reads the same files from disk, is fine.
+//
+//go:embed web all:templates
 var embedded embed.FS
 
 const (
@@ -66,57 +68,83 @@ const (
 	rateBurst  = 3
 )
 
+// siteCSP forbids script entirely — the site has none — so an injection has
+// nothing to execute. It is passed to nitrokit.SecureHeaders explicitly
+// because it is *stricter* than nitrokit.DefaultCSP, which allows
+// script-src 'self'; taking the default here would loosen the strongest
+// header on the page. The Permissions-Policy default is taken as-is: a site
+// with no JavaScript needs none of the features it turns off.
+const siteCSP = "default-src 'self'; script-src 'none'; style-src 'self'; " +
+	"img-src 'self' data:; font-src 'self'; connect-src 'none'; " +
+	"form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+
 var (
-	dev      = flag.Bool("dev", false, "serve web/ and templates/ from disk and re-parse per request")
-	addr     = flag.String("addr", ":8090", "HTTP listen address")
-	baseURL  = flag.String("baseurl", "", "public origin, e.g. https://ownvault.app (used for canonical and og: tags)")
-	repoURL  = flag.String("repo", "https://github.com/hammondus/ownvault", "GitHub repository URL")
-	contact  = flag.String("to", os.Getenv("OWNVAULT_SITE_CONTACT_TO"), "destination address for contact form mail (env OWNVAULT_SITE_CONTACT_TO)")
-	behindLB = flag.Bool("proxy", true, "trust X-Forwarded-For from the reverse proxy for client IP")
+	dev     = flag.Bool("dev", false, "serve web/ and templates/ from disk and re-parse per request")
+	addr    = flag.String("addr", ":8090", "HTTP listen address")
+	baseURL = flag.String("baseurl", "", "public origin, e.g. https://ownvault.app (used for canonical and og: tags)")
+	repoURL = flag.String("repo", "https://github.com/hammondus/ownvault", "GitHub repository URL")
+	contact = flag.String("to", os.Getenv("OWNVAULT_SITE_CONTACT_TO"), "destination address for contact form mail (env OWNVAULT_SITE_CONTACT_TO)")
+	// Which peers may set X-Forwarded-For. The old -proxy boolean trusted the
+	// header from anyone, which made the per-IP submission limit bypassable by
+	// sending a different value each time. Naming the proxy instead means an
+	// untrusted peer's header is ignored outright.
+	trustedProxies = flag.String("trusted-proxies", "private",
+		`peers whose X-Forwarded-For is trusted: "private" for all loopback and private space, a comma-separated list of CIDRs or addresses, or empty to trust none`)
+	healthcheck = flag.Bool("healthcheck", false, "probe the running server's /healthz and exit; backs the container HEALTHCHECK")
 )
 
 func main() {
 	flag.Parse()
 	log.SetFlags(log.LstdFlags | log.LUTC)
 
+	// The image is distroless: no shell, no curl, nothing a CMD-SHELL probe
+	// could run. So the container health check runs this same binary with
+	// -healthcheck, which dials loopback on -addr and exits by the result.
+	if *healthcheck {
+		if err := nitrokit.HealthProbe(*addr); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	s, err := newServer()
 	if err != nil {
 		log.Fatalf("startup: %v", err)
 	}
 
-	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           s.routes(),
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       2 * time.Minute,
+	srv := nitrokit.NewServer(*addr, s.routes())
+	// Deliberately longer than nitrokit's house values: the contact handler
+	// talks SMTP synchronously, so a response can legitimately take as long as
+	// the upstream mail server does.
+	srv.ReadHeaderTimeout = 10 * time.Second
+	srv.ReadTimeout = 30 * time.Second
+	srv.WriteTimeout = 60 * time.Second
+	srv.IdleTimeout = 2 * time.Minute
+
+	log.Printf("site listening on %s (dev=%v, mail=%s)", *addr, *dev, s.mailMode)
+	if err := nitrokit.Run(context.Background(), srv); err != nil {
+		log.Fatal(err)
 	}
-
-	go func() {
-		log.Printf("site listening on %s (dev=%v, mail=%s)", *addr, *dev, s.mailMode)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("listen: %v", err)
-		}
-	}()
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	<-stop
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(ctx)
+	log.Print("shutdown complete")
 }
 
 // ---------- server ----------
 
+// assetServer is the shape both nitrokit asset types share: nitrokit.Assets
+// hashes an embedded tree once at startup, nitrokit.DirAssets re-hashes a
+// directory when a file changes. The site needs the first in production and
+// the second in -dev, and nothing else in the file cares which it has.
+type assetServer interface {
+	http.Handler
+	URL(name string) string
+}
+
 type server struct {
-	files fs.FS // the web/ subtree, however it is being read
+	assets assetServer // serves web/ and stamps its cache-busting URLs
 
 	// tplMu guards tpl, which is swapped on every request in dev mode.
 	tplMu sync.RWMutex
-	tpl   *template.Template
+	tpl   *nitrokit.Templates
 
 	sender   mailer.Sender
 	mailMode string // "smtp" or "log", for the startup line
@@ -129,11 +157,9 @@ type server struct {
 
 	limiter *ipLimiter
 
-	// assetV maps a path under web/ to a short hash of its contents. Per file,
-	// not one version for the whole site: a shared stamp would leave an edited
-	// image cached for a year whenever the CSS happened not to change.
-	// Empty in dev, where files are read from disk and no-cache does the work.
-	assetV map[string]string
+	// trust decides whose X-Forwarded-For is believed when resolving the
+	// client address the submission limit buckets by.
+	trust *nitrokit.ProxyTrust
 }
 
 func newServer() (*server, error) {
@@ -146,24 +172,31 @@ func newServer() (*server, error) {
 		return nil, fmt.Errorf("form key: %w", err)
 	}
 
-	sub, err := fs.Sub(sourceFS(), "web")
+	trust, err := parseTrust(*trustedProxies)
 	if err != nil {
 		return nil, err
 	}
-	s.files = sub
+	s.trust = trust
+
+	// Assets mount at the root, so style.css keeps its /style.css?v=<hash>
+	// URL. In dev they come from disk and are re-hashed when a file changes,
+	// which is what makes an edit show on refresh with the hashing intact; in
+	// production they are embedded and hashed once, because they cannot change
+	// under a running process.
+	if *dev {
+		s.assets, err = nitrokit.NewDirAssets("web", "/")
+	} else {
+		var sub fs.FS
+		if sub, err = fs.Sub(embedded, "web"); err == nil {
+			s.assets, err = nitrokit.NewAssets(sub, "/")
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("assets: %w", err)
+	}
 
 	if err := s.parseTemplates(); err != nil {
 		return nil, err
-	}
-
-	// In dev the files are read from disk per request, so hashes stamped at
-	// startup would be wrong the moment one is edited; skip them there and let
-	// no-cache do the work. In production the files are embedded and cannot
-	// change under a running process, so hashing once is correct.
-	if !*dev {
-		if err := s.hashAssets(); err != nil {
-			return nil, fmt.Errorf("hash assets: %w", err)
-		}
 	}
 
 	cfg := mailer.ConfigFromEnv("OWNVAULT_SITE_SMTP_")
@@ -183,8 +216,20 @@ func newServer() (*server, error) {
 	return s, nil
 }
 
-// sourceFS picks disk in dev mode so edits show on refresh, and the embedded
-// copy otherwise. The two have identical layouts, so nothing else branches.
+// parseTrust turns the -trusted-proxies flag into a trust list. "private" is
+// the deployed shape (Nginx Proxy Manager on a private Docker network); a
+// CIDR list is tighter; empty trusts nobody, for a server exposed directly.
+func parseTrust(list string) (*nitrokit.ProxyTrust, error) {
+	if list == "private" {
+		return nitrokit.TrustPrivateProxies(), nil
+	}
+	return nitrokit.ParseTrustedProxies(list)
+}
+
+// sourceFS picks disk in dev mode so template edits show on refresh, and the
+// embedded copy otherwise. The two have identical layouts, so nothing else
+// branches. Assets do not go through it — they have their own dev/embedded
+// split in newServer.
 func sourceFS() fs.FS {
 	if *dev {
 		return os.DirFS(".")
@@ -193,9 +238,15 @@ func sourceFS() fs.FS {
 }
 
 func (s *server) parseTemplates() error {
-	t, err := template.New("").Funcs(template.FuncMap{
-		"asset": s.asset,
-	}).ParseFS(sourceFS(), "templates/*.html")
+	sub, err := fs.Sub(sourceFS(), "templates")
+	if err != nil {
+		return err
+	}
+	// The asset func is looked up through s on every call rather than bound
+	// once, so it keeps working across the per-request re-parse in dev.
+	t, err := nitrokit.ParseTemplates(sub, template.FuncMap{
+		"asset": func(name string) string { return s.assets.URL(name) },
+	})
 	if err != nil {
 		return err
 	}
@@ -205,74 +256,17 @@ func (s *server) parseTemplates() error {
 	return nil
 }
 
-// hashAssets records a short content hash for every file under web/.
-func (s *server) hashAssets() error {
-	s.assetV = make(map[string]string)
-	return fs.WalkDir(s.files, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		b, err := fs.ReadFile(s.files, p)
-		if err != nil {
-			return err
-		}
-		sum := sha256.Sum256(b)
-		s.assetV[p] = hex.EncodeToString(sum[:])[:12]
-		return nil
-	})
-}
-
-// asset returns a URL for a static file, content-hashed in production so it can
-// be cached forever and still change when the bytes do.
-func (s *server) asset(name string) string {
-	if v := s.assetV[name]; v != "" {
-		return "/" + name + "?v=" + v
-	}
-	return "/" + name
-}
-
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.HandleFunc("GET /contact", s.handleContactForm)
 	mux.HandleFunc("POST /contact", s.handleContactPost)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		io.WriteString(w, "ok\n")
-	})
-	mux.Handle("GET /", s.static())
-	return securityHeaders(mux)
-}
-
-// static serves web/ with cache headers set per resource: a request carrying a
-// ?v= hash names its exact bytes and can be cached forever; everything else
-// gets an hour, because that URL's content can change under a client.
-func (s *server) static() http.Handler {
-	fileServer := http.FileServer(http.FS(s.files))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("v") != "" {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		} else {
-			w.Header().Set("Cache-Control", "public, max-age=3600")
-		}
-		fileServer.ServeHTTP(w, r)
-	})
-}
-
-// securityHeaders applies one policy to every response. The CSP forbids script
-// entirely — the site has none — so an injection has nothing to execute.
-func securityHeaders(next http.Handler) http.Handler {
-	const csp = "default-src 'self'; script-src 'none'; style-src 'self'; " +
-		"img-src 'self' data:; font-src 'self'; connect-src 'none'; " +
-		"form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("Content-Security-Policy", csp)
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "no-referrer")
-		next.ServeHTTP(w, r)
-	})
+	mux.HandleFunc("GET /healthz", nitrokit.Healthz)
+	// The asset server owns everything else: a request carrying a ?v= hash
+	// names its exact bytes and is cached forever, anything else gets an hour,
+	// and an unknown path 404s.
+	mux.Handle("GET /", s.assets)
+	return nitrokit.SecureHeaders(siteCSP, "", mux)
 }
 
 // ---------- pages ----------
@@ -301,7 +295,17 @@ type contactForm struct {
 	Message string
 }
 
-func (s *server) render(w http.ResponseWriter, r *http.Request, name string, p page) {
+// render writes one page with an explicit status. The status is a parameter
+// rather than something the caller writes first, because a failed contact
+// submission re-renders the same page as a 400 or a 429 — and writing the
+// header before rendering committed the response, so every header the render
+// set afterwards (Content-Type, Cache-Control) was silently dropped on those
+// error pages.
+//
+// nitrokit.Render buffers, so a template that fails halfway is a clean 500
+// rather than a 200 with half a page, and it adds the ETag that makes the
+// no-cache policy cost a 304 instead of a full re-render on every navigation.
+func (s *server) render(w http.ResponseWriter, r *http.Request, name string, status int, p page) {
 	if *dev {
 		if err := s.parseTemplates(); err != nil {
 			log.Printf("template: %v", err)
@@ -318,23 +322,14 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, name string, p p
 	t := s.tpl
 	s.tplMu.RUnlock()
 
-	// Render to memory first: a template that fails halfway must not leave a
-	// 200 with half a page on the wire.
-	var buf strings.Builder
-	if err := t.ExecuteTemplate(&buf, name, p); err != nil {
+	if err := t.Render(w, r, name, status, p); err != nil {
 		log.Printf("render %s: %v", name, err)
 		http.Error(w, "template error", http.StatusInternalServerError)
-		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// HTML carries the URLs of every asset it references, so serving it stale
-	// would defeat the content hashing above. Store, but always revalidate.
-	w.Header().Set("Cache-Control", "no-cache")
-	io.WriteString(w, buf.String())
 }
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "index.html", page{
+	s.render(w, r, "index.html", http.StatusOK, page{
 		Title: "Own Vault — a password manager you actually own",
 		Desc:  "A zero-knowledge password manager. Encrypted in your browser, synced by a server that cannot read it, and yours to host.",
 		Nav:   "home",
@@ -342,7 +337,7 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleContactForm(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "contact.html", page{
+	s.render(w, r, "contact.html", http.StatusOK, page{
 		Title:   "Contact — Own Vault",
 		Desc:    "Get in touch about Own Vault.",
 		Nav:     "contact",
@@ -352,19 +347,20 @@ func (s *server) handleContactForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleContactPost(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
-
 	fail := func(status int, msg string, f contactForm) {
-		w.WriteHeader(status)
-		s.render(w, r, "contact.html", page{
+		s.render(w, r, "contact.html", status, page{
 			Title: "Contact — Own Vault", Desc: "Get in touch about Own Vault.",
 			Nav: "contact", Token: s.newToken(time.Now()),
 			Error: msg, Form: f, MailOff: s.to == "",
 		})
 	}
 
-	if err := r.ParseForm(); err != nil {
-		fail(http.StatusBadRequest, "That message was too large to accept.", contactForm{})
+	// ReadForm caps the body and dispatches on the Content-Type, so a form
+	// that ever grows a file input keeps working — r.ParseForm alone ignores a
+	// multipart body and hands the handler five empty fields. It writes its
+	// own 413 or 400, which is the right answer for a 64 KiB submission: no
+	// person types that, so there is no one to show a friendly page to.
+	if !nitrokit.ReadForm(w, r, maxFormBytes) {
 		return
 	}
 
@@ -378,8 +374,8 @@ func (s *server) handleContactPost(w http.ResponseWriter, r *http.Request) {
 	// Honeypot: a field hidden from people, irresistible to form-filling bots.
 	// Answer 200 with the success page so the bot learns nothing.
 	if r.PostFormValue("website") != "" {
-		log.Printf("contact: honeypot tripped from %s", clientIP(r))
-		s.render(w, r, "contact.html", page{Title: "Contact — Own Vault", Nav: "contact", Sent: true})
+		log.Printf("contact: honeypot tripped from %s", s.clientIP(r))
+		s.render(w, r, "contact.html", http.StatusOK, page{Title: "Contact — Own Vault", Nav: "contact", Sent: true})
 		return
 	}
 
@@ -405,7 +401,7 @@ func (s *server) handleContactPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.limiter.allow(clientIP(r)) {
+	if !s.limiter.allow(s.clientIP(r)) {
 		fail(http.StatusTooManyRequests, "You have sent several messages already. Please wait an hour before sending another.", f)
 		return
 	}
@@ -420,7 +416,7 @@ func (s *server) handleContactPost(w http.ResponseWriter, r *http.Request) {
 		To:      []string{s.to},
 		ReplyTo: f.Email,
 		Subject: "[ownvault] " + f.Subject,
-		Text:    composeBody(f, clientIP(r)),
+		Text:    composeBody(f, s.clientIP(r)),
 	}
 	if err := s.sender.Send(ctx, msg); err != nil {
 		log.Printf("contact: send failed: %v", err)
@@ -428,8 +424,8 @@ func (s *server) handleContactPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("contact: sent from %q via %s", f.Email, clientIP(r))
-	s.render(w, r, "contact.html", page{
+	log.Printf("contact: sent from %q via %s", f.Email, s.clientIP(r))
+	s.render(w, r, "contact.html", http.StatusOK, page{
 		Title: "Message sent — Own Vault", Desc: "Get in touch about Own Vault.",
 		Nav: "contact", Sent: true,
 	})
@@ -563,22 +559,15 @@ func (l *ipLimiter) allow(ip string) bool {
 	return true
 }
 
-// clientIP returns the address to rate-limit and to log. Behind a reverse
-// proxy every RemoteAddr is the proxy, so the leftmost X-Forwarded-For entry
-// is used instead — trustworthy only because -proxy asserts that a proxy we
-// control sets that header.
-func clientIP(r *http.Request) string {
-	if *behindLB {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			first, _, _ := strings.Cut(xff, ",")
-			if ip := strings.TrimSpace(first); ip != "" {
-				return ip
-			}
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+// clientIP returns the address to rate-limit and to log.
+//
+// It walks X-Forwarded-For from the RIGHT and stops at the first hop that is
+// not a trusted proxy. The old code took the leftmost value whenever -proxy
+// was on, which is the value an attacker writes: a spam run could send a
+// different X-Forwarded-For with every request and never spend more than one
+// of its three hourly submissions. The rightmost hops are the ones a proxy
+// appended itself, and a peer that is not in the trust list has its header
+// ignored entirely.
+func (s *server) clientIP(r *http.Request) string {
+	return s.trust.ClientIP(r).String()
 }

@@ -422,10 +422,21 @@ Rules to keep when touching it:
 - **Screenshots in `site/web/img/` are generated** by `site/tools/shots.js`
   (`make shots`, with the app running on :8080). After a UI change that alters
   what they show, regenerate rather than editing copy around a stale image.
-- **Caching follows the house rule**: HTML `no-cache`; `{{asset}}` stamps a
-  per-file content hash, and anything carrying `?v=` is served `immutable`.
-  Hashes are computed at startup from the embedded files, and skipped in `-dev`
-  where files come from disk.
+- **The HTTP infrastructure comes from nitrokit**, like the vault server's:
+  `NewServer`/`Run`, `SecureHeaders` (pass its `script-src 'none'` CSP
+  verbatim — the default would *loosen* it), `Assets`/`DirAssets`,
+  `ParseTemplates`/`Render`, `ReadForm`, `ProxyTrust`, `Healthz`/`HealthProbe`.
+  The honeypot, the HMAC form token, and the three-per-hour sliding-log limiter
+  stay local — their semantics are deliberate.
+- **Templates follow nitrokit's naming**: a leading underscore marks a partial
+  (`_partials.html`), and every other `*.html` is a page rendered by its own
+  name. The `go:embed` directive must keep `all:templates`, because a plain
+  directive skips `_`-prefixed files and the partial would vanish from the
+  binary while `-dev` kept working.
+- **Caching follows the house rule**: HTML `no-cache` with an ETag, so a
+  revalidation costs a 304; `{{asset}}` stamps a per-file content hash, and
+  anything carrying `?v=` is served `immutable`. Hashes come from the embedded
+  files in production and are re-read on change in `-dev`.
 
 # Public Use
 As the server is zero trust, if you want public sync on your devices, you can

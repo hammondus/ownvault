@@ -26,5 +26,14 @@ WORKDIR /app
 COPY --from=build /out/ovsite /app/ovsite
 
 EXPOSE 8090
+
+# The binary probes itself. Distroless has no shell and no curl, so the usual
+# CMD-SHELL probe is impossible; -healthcheck dials loopback on the listen
+# address and exits by the result. Exec form for the same reason — there is no
+# shell to parse the string form — which is also why -addr is repeated here
+# rather than inherited from CMD.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD ["/app/ovsite", "-healthcheck", "-addr", ":8090"]
+
 ENTRYPOINT ["/app/ovsite"]
 CMD ["-addr", ":8090"]

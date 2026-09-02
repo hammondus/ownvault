@@ -4,6 +4,62 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## The website moved to nitrokit too (2026-09)
+
+`site/` now imports the same module as the vault server, one commit later. The
+site is a separate Go module, so it pins nitrokit independently. Four things
+changed behaviour, three of them fixes.
+
+**The client IP was spoofable, and that made the rate limit decorative.** The
+old `clientIP` took the *leftmost* `X-Forwarded-For` value whenever `-proxy`
+was on, and `-proxy` defaulted to on. The leftmost value is the one an attacker
+writes: a spam run could send a different address with every request and never
+spend more than one of its three hourly submissions. `ProxyTrust.ClientIP`
+walks the header from the right and stops at the first hop that is not a
+trusted proxy, and it ignores the header outright from an untrusted peer. The
+`-proxy` boolean is gone; `-trusted-proxies` names who may set the header, and
+defaults to `private` — loopback and private space, which is Nginx Proxy
+Manager on the Docker network. The old README already admitted the weakness
+("anything that can reach the server can set that header"); this closes it
+rather than documenting it.
+
+**Error pages were dropping their own headers.** The `fail` helper called
+`w.WriteHeader(status)` and *then* rendered, but `render` set `Content-Type`
+and `Cache-Control` afterwards — too late, because the response was already
+committed. Every 400, 429, and 503 the contact form produced went out with no
+cache policy. `nitrokit.Render` takes the status as a parameter and writes the
+header last, so the error pages now carry the same policy as the success page.
+
+**HTML responses gained an ETag.** The house rule makes every page `no-cache`,
+which costs a revalidation round trip — and a revalidation is only cheap
+against a validator. Template output written straight to a `ResponseWriter` has
+none, so every navigation was a full re-render and full transfer. `Render`
+hashes the buffered page it already has, so a repeat visit is a 304.
+
+**`-dev` gained the asset hashing it used to skip.** Hashing once at startup is
+only correct for an embedded tree, so the old code skipped it entirely on disk
+and let `no-cache` carry dev. `DirAssets` re-hashes when a file changes, so dev
+and production now differ in where the bytes come from and nothing else.
+
+Two things stayed local on purpose: the sliding-log limiter, whose "three in
+the last hour" semantics are the documented policy and are clearer as a log
+than as a token bucket, and the HMAC form token with its honeypot. Neither
+generalises.
+
+One accepted regression: an oversize submission gets `nitrokit.ReadForm`'s
+plain 413 instead of the friendly "that message was too large" page. The cap is
+64 KiB — roughly ten thousand words — so nobody typing in good faith reaches
+it, and what `ReadForm` buys is that the body cap keeps working if the form
+ever grows a file input. `r.ParseForm` silently ignores a multipart body and
+hands the handler five empty fields.
+
+**A trap worth naming: `go:embed` skips `_`-prefixed files.** nitrokit marks
+partials with a leading underscore, so renaming `partials.html` to
+`_partials.html` dropped it from the embedded filesystem and every page
+rendered as a 500 — in production only, because `-dev` reads the same files
+from disk and was fine. The directive is now `//go:embed web all:templates`.
+Any project adopting nitrokit's template convention has this waiting for it.
+
 ## The server infrastructure comes from nitrokit (2026-09)
 
 `main.go` no longer hand-rolls its HTTP plumbing. It imports
@@ -134,10 +190,12 @@ and burns the sending domain's reputation.
 **Asset hashes are per file, not one version for the site.** The first cut
 hashed `style.css` and stamped that one version onto every asset URL. That is
 wrong in a way that only shows up later: an edited image whose URL did not
-change stays cached for a year. `hashAssets` walks `web/` at startup and
-records a hash per path. Hashing once at startup is correct only because the
-files are embedded and cannot change under a running process — in `-dev` they
-are read from disk, so hashing is skipped and `no-cache` does the work.
+change stays cached for a year. The hashing now comes from nitrokit —
+`Assets` over the embedded tree in production, `DirAssets` over the directory
+in `-dev` — and both stamp a hash per path. Mounted at the root prefix, so the
+URLs are unchanged: `/style.css?v=<hash>`. `-dev` gained the hashing it used
+to skip: `DirAssets` re-hashes when a file changes, so an edit shows on
+refresh with cache-busting intact rather than relying on `no-cache` alone.
 
 **The screenshots are generated, not curated.** `site/tools/shots.js` drives a
 real browser against a real vault, seeded with invented logins, and writes

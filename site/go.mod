@@ -4,6 +4,15 @@
 // parent module automatically.
 module github.com/hammondus/ownvault/site
 
-go 1.26
+go 1.26.5
 
-require github.com/hammondus/mailer v0.1.1
+require (
+	github.com/hammondus/mailer v0.1.1
+	github.com/hammondus/nitrokit v0.1.1
+)
+
+require (
+	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
+)

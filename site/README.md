@@ -43,11 +43,20 @@ Flags:
 | `-to` | `$OWNVAULT_SITE_CONTACT_TO` | destination for contact mail |
 | `-baseurl` | empty | public origin, for the canonical and `og:` tags |
 | `-repo` | the GitHub URL | repository the links point at |
-| `-proxy` | on | trust `X-Forwarded-For` for the client IP |
+| `-trusted-proxies` | `private` | peers whose `X-Forwarded-For` is believed |
+| `-healthcheck` | off | probe a running server's `/healthz` and exit |
 
-Turn `-proxy` **off** if the site is ever exposed directly rather than through
-a reverse proxy. With it on, anything that can reach the server can set that
-header, and rate limiting counts per forged IP.
+`-trusted-proxies` decides which client address the rate limiter counts
+against. `private` covers loopback and private space, which is the deployed
+shape: Nginx Proxy Manager on a Docker network. Pass a comma-separated list of
+CIDRs or addresses to name the proxy exactly, or an empty string if the site is
+ever exposed directly — then `X-Forwarded-For` is ignored and the peer address
+is used. An untrusted peer's header is never believed, and the header is read
+from the right, so a forged value cannot push the real client out of its
+bucket.
+
+`-healthcheck` backs the container `HEALTHCHECK`: the distroless image has no
+shell, so the binary probes itself.
 
 Mail is configured entirely by environment: see `.env.example`.
 
