@@ -34,7 +34,11 @@
        The plain href is the no-JS / no-htmx fallback (the Go server returns
        this shell for any app route). -->
   <nav id="nav" class="nav" aria-label="Main navigation">
-    <div class="nav-header">Menu</div>
+    <div class="nav-header">
+      <span>Menu</span>
+      <!-- Shown only while the drawer is pinned open (CSS, body.nav-pinned) -->
+      <span class="nav-pin-badge">Pinned</span>
+    </div>
     <ul class="nav-list" hx-target="#main" hx-swap="innerHTML show:window:top">
       <li><a class="nav-link" href="/"          hx-get="/pages/passwords.html" hx-push-url="/"          data-title="Passwords">🔑 Passwords</a></li>
       <li><a class="nav-link" href="/settings"  hx-get="/pages/settings.html"  hx-push-url="/settings"  data-title="Settings">⚙️ Settings</a></li>

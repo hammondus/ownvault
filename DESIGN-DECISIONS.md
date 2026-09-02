@@ -4,6 +4,39 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## The hamburger parks in the top bar, and pinning shows itself (2026-09)
+
+The hamburger used to default to the bottom right, floating over the content
+like a FAB. On a desktop window that is the worst corner: it sits far from the
+bar it belongs to, overlaps whatever the page puts at the bottom, and reads as
+an unrelated control. It now defaults to the top left, inside the bar.
+
+Making it fit meant sizing the two together rather than separately: the button
+dropped to 42 px and the bar grew to 58 px, so 8 px of bar shows above and
+below the button and it reads as part of the bar instead of on top of it. The
+bar's title and the drawer's "Menu" heading both indent by
+`--bar-text-inset` (the button, its inset, and a gap), which is derived from
+`--btn-size`, so changing the button size cannot leave the title underneath it.
+
+The button keeps its own fill rather than inheriting `--bar-bg`: identical
+colours made it vanish into the bar. Midnight now uses a lighter navy
+(`#23446f`); classic already used the accent.
+
+Dragging still works and a saved position still wins — the CSS default sets
+`left`/`top`, the same properties the drag writes inline, so there is no
+over-constrained `right`/`bottom` interaction to reason about. A position saved
+before this change survives it; Settings → *Reset menu button position* returns
+the button to the bar.
+
+Pinning (double-tap to lock the drawer open) previously had no indicator: a
+drawer that stayed open looked the same as one that had not closed yet. Two
+now mark it — a "Pinned" badge beside the drawer heading, and a gold fill plus
+ring on the button that caused it. The gold is deliberate: filling the pinned
+button with the accent would be invisible in the classic scheme, where the
+button is *already* accent-filled, and gold matches the app's padlock. The
+button's `aria-label` becomes "Menu pinned open, tap to release" so the state
+is not colour-only.
+
 ## The website moved to nitrokit too (2026-09)
 
 `site/` now imports the same module as the vault server, one commit later. The

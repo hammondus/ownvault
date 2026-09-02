@@ -236,6 +236,10 @@
     } else {
       closeNav();
     }
+    // openNav/closeNav have just set the plain label; a pinned drawer is a
+    // third state, so name it for screen readers as the badge and the
+    // button's accent fill do visually.
+    if (on) btn.setAttribute("aria-label", "Menu pinned open, tap to release");
   }
 
   // Restore the pin (silently ignored on narrow screens), and drop it if the

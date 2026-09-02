@@ -6,12 +6,21 @@
   --page-bg: #f4f6f8;
   --page-fg: #22292f;
   --card-bg: #ffffff;
-  --btn-size: 56px;
+  --btn-size: 42px;
   /* Top bar navy (default "midnight" scheme); the manifest theme_color and
-     the SCHEMES map in app.js must agree with these scheme colors */
+     the SCHEMES map in app.js must agree with these scheme colors.
+     The hamburger sits inside the bar by default, so its fill is a lighter
+     navy — the same colour would make the button disappear into the bar. */
   --bar-bg: #0a1f3b;
-  --menu-btn-bg: var(--bar-bg);
-  --bar-height: 52px;
+  --menu-btn-bg: #23446f;
+  /* Tall enough for the button plus a margin above and below it */
+  --bar-height: 58px;
+  /* Hamburger's parked position: left inset, and the gap the bar's own text
+     needs to clear it */
+  --menu-btn-inset: 10px;
+  /* Padlock gold, used to mark the drawer as pinned open */
+  --pin-bg: #d8a418;
+  --bar-text-inset: calc(var(--menu-btn-inset) * 2 + var(--btn-size) + 4px);
 }
 
 /* "Classic" scheme: the original logo navy bar + accent-blue hamburger.
@@ -48,7 +57,9 @@ body {
   right: 0;
   /* Extend behind the iOS status bar / notch area */
   height: calc(var(--bar-height) + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 20px 0;
+  /* Left padding clears the hamburger's parked position (--menu-btn-inset +
+     the button + a gap), so the title is never underneath it */
+  padding: env(safe-area-inset-top) 20px 0 var(--bar-text-inset);
   display: flex;
   align-items: center;
   background: var(--bar-bg);
@@ -156,10 +167,35 @@ main {
 }
 
 .nav-header {
-  padding: 20px;
+  /* The drawer opens underneath the parked hamburger, so its title clears
+     the button the same way the top bar's does. */
+  padding: 20px 20px 20px var(--bar-text-inset);
   font-size: 1.2rem;
   font-weight: 600;
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* "Pinned" badge: hidden until the drawer is pinned open (body.nav-pinned),
+   so the locked-open state names itself instead of being inferred from the
+   drawer simply not closing. */
+.nav-pin-badge {
+  display: none;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: var(--pin-bg);
+  background: rgba(216, 164, 24, 0.16);
+  border: 1px solid rgba(216, 164, 24, 0.5);
+}
+
+body.nav-pinned .nav-pin-badge {
+  display: inline-block;
 }
 
 .nav-list {
@@ -287,13 +323,12 @@ body.offline .toast {
 
 .menu-btn {
   position: fixed;
-  /* Default position: bottom-right, floating-action-button style — thumb
-     reach on phones, and over empty space instead of the search field the
-     old below-the-bar top-left default covered. A saved position from JS
-     sets inline left/top, which win over right/bottom (over-constrained
-     resolution), so dragging still overrides this cleanly. */
-  right: 16px;
-  bottom: max(24px, calc(env(safe-area-inset-bottom) + 12px));
+  /* Default position: parked in the top bar at the left, centred in the bar's
+     height. The bar is taller than the button, so the button reads as part of
+     it rather than as something floating over it. A saved position from JS
+     sets inline left/top, which override these, so dragging still wins. */
+  left: var(--menu-btn-inset);
+  top: calc(env(safe-area-inset-top) + (var(--bar-height) - var(--btn-size)) / 2);
   width: var(--btn-size);
   height: var(--btn-size);
   border: none;
@@ -311,7 +346,25 @@ body.offline .toast {
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
-  opacity: .7;
+  /* Nearly opaque: it has to stay readable against the bar it sits in, and
+     legible when dragged over page content. */
+  opacity: .92;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Pinned = the drawer is locked open. The button is the control that did it,
+   so it carries the state: the padlock gold, plus a ring. Gold rather than
+   the accent because the classic scheme already fills the button with the
+   accent — the state has to read the same in both schemes. */
+body.nav-pinned .menu-btn {
+  background: var(--pin-bg);
+  opacity: 1;
+  box-shadow: 0 0 0 3px rgba(216, 164, 24, 0.35), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* White bars would sit at about 2:1 on the gold; the bar navy is legible. */
+body.nav-pinned .menu-btn-bar {
+  background: #0a1f3b;
 }
 
 .menu-btn.dragging {
@@ -321,7 +374,7 @@ body.offline .toast {
 }
 
 .menu-btn-bar {
-  width: 22px;
+  width: 20px;
   height: 3px;
   border-radius: 2px;
   background: #fff;
