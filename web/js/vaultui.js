@@ -34,6 +34,8 @@
   var idleTimer = null;
   var clipTimer = null;
   var clipWipeDue = 0; // when a pending clipboard wipe comes due; 0 = none owed
+  var lockMode = ""; // which lock-gate step is showing (showLock's argument)
+  var welcomeCreated = false; // welcome panel: new vault (true) vs just connected
 
   /* ==================== PWA install ==================== */
   // Chromium fires beforeinstallprompt when the app is installable; we stash the
@@ -112,6 +114,27 @@
       // there's nothing to show. The welcome block isn't in a `.card`.
       var card = block.closest(".card");
       if (card) card.hidden = !visible;
+    }
+    setWelcomeLead();
+  }
+
+  // The welcome panel's lead sentence, which depends on both the step and
+  // whether updateInstallUI found anything to offer. Re-run whenever either
+  // changes — beforeinstallprompt can arrive after the panel is up.
+  function setWelcomeLead() {
+    var lead = byId("welcome-lead");
+    var block = byId("welcome-install");
+    if (!lead) return;
+    var offering = !!block && !block.hidden;
+    if (welcomeCreated) {
+      lead.textContent =
+        "Your vault is ready. To sync another device to this vault, connect it using the Vault ID below.";
+    } else if (offering) {
+      lead.textContent =
+        "This device is connected to your vault. Install it as an app, then unlock it with your master password.";
+    } else {
+      lead.textContent =
+        "This device is connected to your vault. Unlock it with your master password.";
     }
   }
 
@@ -251,13 +274,17 @@
   }
 
   function showLock(mode) {
+    lockMode = mode;
     var vaults = window.Sync ? Sync.listVaults() : [];
     document.body.classList.add("locked");
     show(byId("lock-screen"), true);
     show(byId("create-form"), mode === "create");
     show(byId("unlock-form"), mode === "unlock");
     show(byId("connect-form"), mode === "connect");
-    show(byId("welcome-panel"), mode === "welcome");
+    // "welcome" (new vault) and "connected" (joined an existing one) share the
+    // welcome panel: both end with the install offer.
+    var welcomeish = mode === "welcome" || mode === "connected";
+    show(byId("welcome-panel"), welcomeish);
     show(byId("picker-panel"), mode === "picker");
     show(byId("create-error"), false);
     show(byId("unlock-error"), false);
@@ -287,6 +314,14 @@
       show(byId("unlock-switch"), vaults.length > 0);
     }
     show(byId("connect-back"), mode === "connect" && vaults.length > 0);
+    // Only iOS splits storage between Safari and the Home Screen app, so only
+    // there is connecting-then-installing wasted work — confirmed on an
+    // iPhone. Chromium installs are assumed to share the browser's storage
+    // (untested), and an already-installed app has nothing to warn about.
+    show(
+      byId("connect-install-hint"),
+      mode === "connect" && isIOS() && !isStandalone()
+    );
     if (mode === "picker") {
       var ul = byId("picker-list");
       if (ul) {
@@ -304,16 +339,23 @@
     }
     // The welcome step surfaces the freshly created vault's id (sync vaults
     // only) and offers to install the app.
-    if (mode === "welcome") {
+    if (welcomeish) {
+      var created = mode === "welcome";
       var wid = byId("welcome-vault-id");
       if (wid) wid.value = window.Sync ? Sync.getVaultId() : "";
+      // Only a new vault needs its id surfaced; a device that just connected
+      // typed that id to get here.
+      show(byId("welcome-share"), created);
       var wname = byId("welcome-name");
-      var vname = window.App ? App.getVaultName() : "";
+      // The connecting device inherits the vault name on its first unlock
+      // (reconcileVaultName), so there is nothing to title it with yet.
+      var vname = created && window.App ? App.getVaultName() : "";
       if (wname) {
         wname.textContent = vname ? "“" + vname + "” is ready" : "";
         show(wname, !!vname);
       }
-      updateInstallUI();
+      welcomeCreated = created;
+      updateInstallUI(); // decides the offer, and sets the lead to match
     }
     // Start the connect fields empty. The Vault ID must be the *other* device's
     // vault (copied from its Settings) — never this device's own local id, which
@@ -326,7 +368,7 @@
     var focusId =
       mode === "create" ? "create-pw"
         : mode === "connect" ? "connect-id"
-        : mode === "welcome" ? "welcome-continue"
+        : welcomeish ? "welcome-continue"
         : "unlock-pw";
     var focus =
       mode === "picker"
@@ -580,7 +622,11 @@
         // (reconcileVaultName), so there's nothing to ask for here.
         Sync.addVault(id);
         if (window.App) App.refreshVaultUI();
-        showLock("unlock");
+        // Not straight to "unlock": this is the one moment the user knows the
+        // device is newly attached, so it is where the install offer belongs.
+        // On iOS the installed app starts with empty storage, and the step
+        // says so.
+        showLock("connected");
       } else if (res.needsAuth) {
         // Stay on this vault so fixing the token and resubmitting just works.
         err.textContent = "Access token required or incorrect.";
@@ -1542,7 +1588,13 @@
   }
 
   function copyValue(value, wipe, label) {
-    if (!navigator.clipboard) return;
+    // Say so when the copy doesn't happen. A silent no-op strands the user at
+    // the worst moment — copying the setup code is what lets a freshly
+    // installed app reach the vault at all.
+    if (!navigator.clipboard) {
+      toast("This browser won't allow copying — read the value instead");
+      return;
+    }
     navigator.clipboard.writeText(value).then(function () {
       var ms = clipClearMs();
       clearTimeout(clipTimer);
@@ -1555,6 +1607,9 @@
         clipWipeDue = 0;
         toast("Copied");
       }
+    }, function () {
+      // Permission denied, or an insecure context.
+      toast("Couldn't copy to the clipboard — read the value instead");
     });
   }
 
@@ -1768,7 +1823,12 @@
   byId("create-restore").addEventListener("click", openRestore);
   byId("connect-restore").addEventListener("click", openRestore);
   byId("restore-file").addEventListener("change", handleRestoreFile);
-  byId("welcome-continue").addEventListener("click", afterUnlock);
+  // After creating a vault the app is already unlocked, so Continue enters it.
+  // After connecting, nothing is unlocked yet — Continue goes to the prompt.
+  byId("welcome-continue").addEventListener("click", function () {
+    if (lockMode === "connected") showLock("unlock");
+    else afterUnlock();
+  });
   byId("welcome-copy").addEventListener("click", function () {
     if (window.Sync) copyValue(Sync.getVaultId(), false);
   });
@@ -1798,6 +1858,12 @@
   // Install button (welcome step + Settings card) — delegated on body so the one
   // handler covers both the persistent welcome chrome and the swapped-in
   // Settings fragment.
+  // Copy the setup code from inside the iOS install steps: the Home Screen app
+  // starts with empty storage, so the code is what it needs to reconnect.
+  document.body.addEventListener("click", function (e) {
+    if (!e.target.closest(".install-code-btn")) return;
+    if (window.Sync && Sync.getVaultId()) copyValue(Sync.makeSetupCode(), false);
+  });
   document.body.addEventListener("click", function (e) {
     if (!e.target.closest(".install-btn")) return;
     if (!deferredInstallPrompt) return;

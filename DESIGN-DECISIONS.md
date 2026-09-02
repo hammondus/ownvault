@@ -4,6 +4,49 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Install prompt after connecting, and the iOS storage split (2026-09)
+
+Creating a vault offered the install; *connecting* a device to an existing one
+did not. So the common second-device path — connect the phone, then add it to
+the Home Screen — silently threw the setup away and asked for it again. The
+install offer only existed at the moment it was least needed.
+
+Two changes. A successful connect now lands on `showLock("connected")` instead
+of going straight to the unlock prompt. That step reuses `#welcome-panel` with
+the Vault ID half (`#welcome-share`) hidden and a different lead sentence,
+rather than a fourth near-identical copy of the install markup. And the connect
+form itself carries an iOS-only hint *before* the user spends the setup, since
+preventing the wasted work beats explaining it afterwards.
+
+The warning is iOS-only on purpose, and a blanket "you will need to connect
+again" would be wrong. An iOS Home Screen web app has its own storage container,
+separate from Safari, so the installed app starts with no vault — observed
+first-hand on an iPhone, which is the only mobile platform this project has
+been tested on. A Chromium install is understood to run in the same profile on
+the same origin and keep everything, which is why it gets no warning; that half
+is reasoned, **not tested here**. If an Android or desktop Chrome install turns
+out to lose the vault, the fix is to widen the warning past the `.install-ios`
+branch — treat this paragraph as the assumption to check first.
+
+The existing `updateInstallUI` branches already split along that line —
+`beforeinstallprompt` means Chromium, `isIOS()` means manual Add-to-Home-Screen
+steps — so the warning lives inside the `.install-ios` branch and needs no new
+detection.
+
+Alongside the warning is a **Copy setup code** button, which turns "set it up
+again" into one paste plus the master password. `Sync.makeSetupCode()` needs no
+vault key, so it works on the locked gate.
+
+The panel's lead sentence is set by `setWelcomeLead()` rather than written into
+the markup, because it has to agree with what `updateInstallUI` decided: on a
+browser that cannot install, or one already running installed, the panel must
+not point at an offer that isn't rendered. `updateInstallUI` calls it, so a
+`beforeinstallprompt` arriving after the panel is up corrects the text.
+
+`copyValue` gained a rejection handler in the same pass. A denied clipboard
+write used to be a silent no-op; on the setup code that would strand a user
+mid-install with nothing to paste into the app they just installed.
+
 ## No `type="password"` anywhere, master password included (2026-09)
 
 The 2026-07 review took `type="password"` off the entry edit form (see

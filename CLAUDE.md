@@ -333,6 +333,18 @@ Supporting flows the above depends on:
   link opened on a device that already has vaults also routes to connect,
   prefilled — that is the add-another-vault gesture. See Public Use for the
   Vault ID model.
+- **Install prompt**: both ends of the gate offer the PWA install, driven by
+  `updateInstallUI` over every `.install-block` (welcome step, the shared
+  post-connect step, Settings). A successful connect lands on
+  `showLock("connected")` — the welcome panel with the Vault ID half hidden —
+  rather than going straight to the unlock prompt, because that is the one
+  moment the user knows the device is newly attached. On iOS the Home Screen
+  app gets its own storage, so the installed app starts with no vault: the
+  connect step warns *before* the setup is spent, and the install steps carry
+  the warning plus a **Copy setup code** button. Chromium installs are assumed
+  to share the browser's storage, so they get no such warning — that half is
+  untested (iPhone is the only mobile platform this project has run on). See
+  DESIGN-DECISIONS.md "Install prompt after connecting".
 - **Add / edit / delete**: an add button creates a new entry; the record modal
   has edit and delete actions. Deletes are tombstones (see the data model).
   Destructive prompts (delete, restore, print recovery sheet) use the in-app

@@ -121,6 +121,14 @@
                autocorrect="off" spellcheck="false">
         <input id="connect-token" class="lock-input masked" type="text"
                placeholder="Access token (not needed with a setup code)" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
+        <!-- iOS only, and only in Safari rather than the installed app: the
+             Home Screen app gets its own storage, so connecting here does not
+             carry over. Revealed by vaultui.js showLock. -->
+        <p id="connect-install-hint" class="lock-hint lock-hint-warn" hidden>
+          On iPhone and iPad, add this page to your Home Screen
+          <strong>before</strong> you connect. The Home Screen app has its own
+          storage, so this setup does not carry over to it.
+        </p>
         <p id="connect-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Connect</button>
         <!-- Revealed by showLock only when getUserMedia exists (secure context). -->
@@ -130,18 +138,23 @@
         <!-- Revealed by showLock when this device already holds vaults. -->
         <button id="connect-back" class="lock-link" type="button" hidden>Back to your vaults</button>
       </form>
-      <!-- Shown once, right after a new vault is created: surface the Vault ID so
-           the user can connect other devices to this same vault. -->
+      <!-- Two steps share this panel, both ending in "install the app now":
+           "welcome" right after a new vault is created (which also surfaces the
+           Vault ID), and "connected" right after this device joins an existing
+           vault. showLock sets the lead text and hides #welcome-share for the
+           connected case. -->
       <div id="welcome-panel" class="lock-form" hidden>
         <h2 id="welcome-name" class="lock-vault-name" hidden></h2>
-        <!-- Surface the Vault ID so other devices can connect. -->
-        <p class="lock-lead">Your vault is ready. To sync another device to
-          <strong>this</strong> vault, connect it using the Vault ID below.</p>
-        <input id="welcome-vault-id" class="lock-input lock-vaultid" type="text"
-               readonly aria-label="Vault ID">
-        <button id="welcome-copy" class="btn btn-ghost lock-btn" type="button">Copy Vault ID</button>
-        <p class="lock-hint">You can always find it again in Settings → Sync. It
-          isn't a secret — your master password is what protects the vault.</p>
+        <p id="welcome-lead" class="lock-lead"></p>
+        <!-- Surface the Vault ID so other devices can connect. New vaults only:
+             a device that just connected already has it. -->
+        <div id="welcome-share">
+          <input id="welcome-vault-id" class="lock-input lock-vaultid" type="text"
+                 readonly aria-label="Vault ID">
+          <button id="welcome-copy" class="btn btn-ghost lock-btn" type="button">Copy Vault ID</button>
+          <p class="lock-hint">You can always find it again in Settings → Sync. It
+            isn't a secret — your master password is what protects the vault.</p>
+        </div>
         <!-- Install as a PWA. The browser's own install control is easy to miss,
              so we offer it explicitly here. Shown only when installable and not
              already installed; iOS Safari has no prompt API, so it gets manual
@@ -162,6 +175,13 @@
             </ol>
             <p class="lock-hint">Other iOS browsers can't install to the Home
               Screen — open this page in Safari first.</p>
+            <p class="lock-hint lock-hint-warn">The Home Screen app has its own
+              storage, separate from Safari. It starts with no vault, so you
+              connect it again once it's there. Copy the setup code now; you
+              also need your master password.</p>
+            <button class="btn btn-ghost lock-btn install-code-btn" type="button">
+              Copy setup code
+            </button>
           </div>
         </div>
         <button id="welcome-continue" class="btn lock-btn" type="button">Continue</button>

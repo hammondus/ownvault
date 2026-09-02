@@ -503,6 +503,15 @@ body.locked {
   opacity: 0.65;
 }
 
+/* A hint the user has to act on rather than skim — the iOS Home Screen app
+   starting with empty storage. Full opacity and the warning amber lift it out
+   of the surrounding hint text. The lock gate is dark, so this is a lighter
+   amber than .card-warn's, which sits on the light page background. */
+.lock-hint-warn {
+  opacity: 1;
+  color: #fbbf24;
+}
+
 /* The freshly created vault's name, shown atop the welcome step. */
 .lock-vault-name {
   margin: 0 0 14px;
