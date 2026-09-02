@@ -76,6 +76,17 @@ Hardening rules layered on that design (all in `vault.js` — keep them intact):
 - **Master password minimum is 12 characters** (create + change, vaultui.js):
   the vault is offline-brute-forceable from a stolen backup or server DB, so
   the password carries the whole load.
+- **No `type="password"` input anywhere in the app.** Every secret field —
+  master password (create/unlock/change/re-encrypt), server access token,
+  entry passwords and recovery codes, both extension popup fields — is a
+  `type="text"` input carrying `.masked` (`-webkit-text-security: disc`) plus
+  `autocomplete="off" spellcheck="false" autocorrect="off"
+  autocapitalize="off"`. Browser save-password heuristics key on the input
+  type, and a real password field invites Chrome to sync the master password
+  into Google Password Manager. `autocomplete="off"` does not suppress the
+  prompt. The one exception is `extension/content.js`, which queries
+  `input[type="password"]` to fill *other* sites' login forms. See
+  DESIGN-DECISIONS.md "No `type="password"` anywhere".
 
 ## Data model: per-entry encrypted records
 

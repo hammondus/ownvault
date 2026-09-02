@@ -788,11 +788,14 @@ body.locked {
   font-size: 1rem;
 }
 
-/* CSS-only password masking (view value + edit input). Used instead of
-   type="password" so browser save-password/autofill heuristics never see a
-   credential field (vaultui.js passwordField). */
+/* CSS-only password masking (view value + every secret input). Used instead
+   of type="password" so browser save-password/autofill heuristics never see a
+   credential field — including the master password itself, which Chrome would
+   otherwise offer to sync into Google Password Manager. See
+   DESIGN-DECISIONS.md "No type=password anywhere". */
 .field-value.masked,
-.form-input.masked {
+.form-input.masked,
+.lock-input.masked {
   -webkit-text-security: disc;
   text-security: disc;
 }

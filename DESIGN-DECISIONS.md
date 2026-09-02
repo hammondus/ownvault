@@ -4,6 +4,47 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## No `type="password"` anywhere, master password included (2026-09)
+
+The 2026-07 review took `type="password"` off the entry edit form (see
+"Edit-form password field is `type=text` + CSS masking" below) but left it
+on every *other* secret field. Chrome duly offered to save the master password
+into Google Password Manager, which syncs it to Google's servers — the one
+secret that must never leave the device, in a store the vault's whole design
+exists to replace. That turned a UI annoyance into a hole in the threat model.
+
+The rule now covers every secret input in the app: the create, unlock, change,
+and re-encrypt master-password fields, the server access token in Settings and
+on the connect screen, and both extension popup fields. Each is a
+`type="text"` input carrying `.masked` (`-webkit-text-security: disc`) plus
+`autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off"`.
+`extension/content.js` still queries `input[type="password"]` — that reads
+*other* sites' login forms to fill them, and must keep doing so.
+
+Nothing weaker works. `autocomplete="off"` has not suppressed Chrome's save
+prompt since Chrome 34 (the Settings token field already carried it and still
+prompted); `autocomplete="new-password"` suppresses autofill, not saving; and
+suppressing the prompt by clearing the field before the DOM changes depends on
+undocumented heuristics that shift between browser versions. Removing the
+signal the heuristics key on is the only stable control the page has.
+
+The costs, accepted:
+
+- Screen readers announce a masked text input as an ordinary text field, so
+  the value is exposed to assistive technology. Real, and the same trade-off
+  the entry edit form already made.
+- A mobile keyboard may add typed characters to its learning dictionary, which
+  `type="password"` suppresses outright. The `autocorrect`/`spellcheck`
+  attributes narrow this, they do not close it.
+- A user who *wants* their OS keychain or another password manager to hold the
+  master password can no longer have it filled. For a password manager's own
+  master password that is the intended outcome, not a regression.
+- A browser without `-webkit-text-security` shows the field unmasked. All
+  evergreen browsers support it (Firefox since 132).
+
+This only stops *future* prompts. A master password already saved in Google
+Password Manager stays there until deleted by hand.
+
 ## The hamburger parks in the top bar, and pinning shows itself (2026-09)
 
 The hamburger used to default to the bottom right, floating over the content

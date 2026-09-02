@@ -16,15 +16,18 @@
       </select>
     </label>
 
+    <!-- Secret inputs are type="text" + CSS masking, never type="password":
+         a real password field invites Chrome to save the master password into
+         Google Password Manager. See DESIGN-DECISIONS.md. -->
     <form id="change-pw-form" class="stack">
       <h3 class="card-subtitle">Change master password</h3>
-      <input class="form-input" type="password" name="old" placeholder="Current password" autocomplete="current-password">
-      <input class="form-input" type="password" name="new" placeholder="New password" autocomplete="new-password">
+      <input class="form-input masked" type="text" name="old" placeholder="Current password" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
+      <input class="form-input masked" type="text" name="new" placeholder="New password" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
       <div id="change-strength" class="pw-meter" hidden>
         <div class="pw-meter-bar"><span></span></div>
         <div class="pw-meter-text"></div>
       </div>
-      <input class="form-input" type="password" name="new2" placeholder="Confirm new password" autocomplete="new-password">
+      <input class="form-input masked" type="text" name="new2" placeholder="Confirm new password" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
       <p id="change-pw-msg" class="form-msg" hidden></p>
       <button class="btn" type="submit">Change password</button>
     </form>
@@ -82,7 +85,7 @@
     <div class="form-row">
       <span class="form-label">Access token (only if your server requires one)</span>
       <div class="sync-row">
-        <input id="sync-token" class="form-input" type="password" autocomplete="off"
+        <input id="sync-token" class="form-input masked" type="text" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off"
                placeholder="leave blank for local / LAN">
         <button id="sync-token-reveal" class="btn" type="button">Show</button>
         <button id="sync-token-copy" class="btn" type="button">Copy</button>
@@ -169,13 +172,13 @@
       master password, and any old backup files stay openable with the old one
       — export a fresh backup afterwards and destroy the old ones.</p>
     <form id="reencrypt-form" class="stack">
-      <input class="form-input" type="password" name="old" placeholder="Current password" autocomplete="current-password">
-      <input class="form-input" type="password" name="new" placeholder="New master password" autocomplete="new-password">
+      <input class="form-input masked" type="text" name="old" placeholder="Current password" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
+      <input class="form-input masked" type="text" name="new" placeholder="New master password" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
       <div id="reenc-strength" class="pw-meter" hidden>
         <div class="pw-meter-bar"><span></span></div>
         <div class="pw-meter-text"></div>
       </div>
-      <input class="form-input" type="password" name="new2" placeholder="Confirm new master password" autocomplete="new-password">
+      <input class="form-input masked" type="text" name="new2" placeholder="Confirm new master password" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
       <p id="reencrypt-msg" class="form-msg" hidden></p>
       <button class="btn btn-danger" type="submit">Re-encrypt vault…</button>
     </form>

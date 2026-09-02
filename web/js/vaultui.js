@@ -2051,9 +2051,11 @@
       return;
     }
     if (e.target.closest("#sync-token-reveal")) {
+      // The field is type="text" masked by CSS (never type="password"), so
+      // revealing it is a class toggle, not a type swap.
       var tokEl = byId("sync-token");
-      var showing = tokEl.type === "text";
-      tokEl.type = showing ? "password" : "text";
+      var showing = !tokEl.classList.contains("masked");
+      tokEl.classList.toggle("masked", showing);
       e.target.closest("#sync-token-reveal").textContent = showing ? "Show" : "Hide";
       return;
     }

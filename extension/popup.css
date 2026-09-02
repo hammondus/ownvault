@@ -125,7 +125,10 @@ input.invalid {
   border-radius: 6px;
   padding: 6px 8px;
 }
-.field-value.masked { -webkit-text-security: disc; }
+/* Masks both the read-only view values and the secret inputs; the app
+   never uses type="password" (DESIGN-DECISIONS.md). */
+.field-value.masked,
+input.masked { -webkit-text-security: disc; text-security: disc; }
 .totp-code { font-family: ui-monospace, Menlo, monospace; font-size: 1.1rem; letter-spacing: 0.05em; }
 .totp-time { flex: 0 0 auto; min-width: 2.2em; text-align: right; font-size: 0.75rem; color: var(--dim); }
 

@@ -76,14 +76,17 @@
         <input id="create-name" class="lock-input" type="text"
                placeholder="Vault name (e.g. Home, Work)" autocomplete="off"
                autocapitalize="words" maxlength="30" aria-label="Vault name">
-        <input id="create-pw" class="lock-input" type="password"
-               placeholder="Master password" autocomplete="new-password">
+        <!-- Secret inputs are type="text" + CSS masking, never type="password":
+             a real password field invites Chrome to save the master password
+             into Google Password Manager. See DESIGN-DECISIONS.md. -->
+        <input id="create-pw" class="lock-input masked" type="text"
+               placeholder="Master password" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
         <div id="create-strength" class="pw-meter" hidden>
           <div class="pw-meter-bar"><span></span></div>
           <div class="pw-meter-text"></div>
         </div>
-        <input id="create-pw2" class="lock-input" type="password"
-               placeholder="Confirm master password" autocomplete="new-password">
+        <input id="create-pw2" class="lock-input masked" type="text"
+               placeholder="Confirm master password" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
         <p id="create-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Create vault</button>
         <button id="create-restore" class="lock-link" type="button">Restore from a backup file</button>
@@ -91,8 +94,8 @@
       <form id="unlock-form" class="lock-form" hidden>
         <h2 id="unlock-vault-name" class="lock-vault-name" hidden></h2>
         <p class="lock-lead">Enter your master password to unlock.</p>
-        <input id="unlock-pw" class="lock-input" type="password"
-               placeholder="Master password" autocomplete="current-password">
+        <input id="unlock-pw" class="lock-input masked" type="text"
+               placeholder="Master password" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
         <p id="unlock-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Unlock</button>
         <!-- Also the road to "Add another vault", so shown whenever a vault
@@ -116,8 +119,8 @@
         <input id="connect-id" class="lock-input" type="text"
                placeholder="Setup code or Vault ID" autocomplete="off" autocapitalize="off"
                autocorrect="off" spellcheck="false">
-        <input id="connect-token" class="lock-input" type="password"
-               placeholder="Access token (not needed with a setup code)" autocomplete="off">
+        <input id="connect-token" class="lock-input masked" type="text"
+               placeholder="Access token (not needed with a setup code)" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
         <p id="connect-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Connect</button>
         <!-- Revealed by showLock only when getUserMedia exists (secure context). -->
