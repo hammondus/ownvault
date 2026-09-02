@@ -4,6 +4,97 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## The server infrastructure comes from nitrokit (2026-09)
+
+`main.go` no longer hand-rolls its HTTP plumbing. It imports
+`github.com/hammondus/nitrokit` (pinned `v0.1.1`) for the lifecycle, security
+headers, client-IP resolution, auth-failure lockout, JSON writing, cache
+policy, and health probe. This is one step in converting every server under
+`~/dev` to that module; the vault-specific code — the sync handlers, per-vault
+write auth, the SSE hub, the TLS redirect — stays local, because none of it
+generalises.
+
+Four calls in the conversion are worth recording.
+
+**The nitrokit defaults for CSP and Permissions-Policy are both wrong here, so
+both are passed explicitly.** `nitrokit.DefaultCSP` has no `'wasm-unsafe-eval'`
+and no `blob:` sources, which would block the Argon2id WASM module, the
+client-generated manifest, and the setup-code QR.
+`nitrokit.DefaultPermissionsPolicy` denies `camera` outright, which would kill
+the in-page QR scanner. The CSP string is carried over byte for byte;
+`camera=(self)` is the only widening of the permissions default. This is the
+inverted case the adoption notes warn about: for most projects the nitrokit
+defaults are a tightening, and taking them here would have been a silent
+downgrade.
+
+**Two security headers changed, both deliberately.** `X-Frame-Options: DENY` is
+gone: the CSP's `frame-ancestors 'none'` supersedes it in every browser that
+also has WebCrypto, IndexedDB, and service workers, which this app requires
+anyway — so the header could only ever have mattered to a browser that cannot
+run the app. `Referrer-Policy` moved from `no-referrer` to nitrokit's
+`same-origin`. The two are identical toward other sites (neither ever sends a
+referrer cross-origin); the difference is same-origin navigations, and no
+ownvault URL carries a secret. The setup code travels in a fragment, which is
+never sent as a referrer at all.
+
+**HSTS could not be taken wholesale.** `nitrokit.HSTS` is unconditional, for a
+server that terminates its own TLS. That fits the mkcert listener exactly, so
+it wraps that one. It does not fit the plain listener, which in the documented
+deployment sits behind Nginx Proxy Manager: TLS is terminated upstream, `r.TLS`
+is nil, and the only signal is `X-Forwarded-Proto`. Dropping that branch would
+have silently stopped sending HSTS in production — the one place it matters —
+so a four-line `hstsWhenProxied` keeps it, reusing `nitrokit.HSTS` for the
+header itself rather than duplicating the string.
+
+**Adopting `NewServer` meant choosing timeouts for a server that had none.**
+`http.ListenAndServe` has no read, write, or idle timeout at all, so this is
+the largest behavioural change in the conversion, and two of the house values
+needed overriding:
+
+- `WriteTimeout = 0`, because it bounds a whole response and `/events` is an
+  open-ended stream. `nitrokit.WriteBudget` wraps the handler in its place, so
+  a single write that makes no progress for 30 s still kills the connection.
+- `ReadTimeout = 2m`, up from the house 15 s, because it bounds the whole
+  request body and `/api/push` accepts up to `maxPushBytes` (8 MiB) for a
+  full-vault restore. Finishing that in 15 s needs a ~4.5 Mbit/s uplink, which
+  a phone on mobile data does not reliably have. Two minutes still bounds how
+  long a trickling connection can hold a goroutine.
+
+`WriteBudget` also caused the one genuine regression the conversion introduced,
+which is worth recording because it fails silently in review and loudly in
+production: its `ResponseWriter` wrapper forwards flushing through `Unwrap`
+but does not implement `http.Flusher`, so the SSE handler's
+`w.(http.Flusher)` assertion started failing and every stream answered
+`500 streaming unsupported`. The fix is `http.NewResponseController(w)`, which
+walks the `Unwrap` chain — the correct idiom since Go 1.20 regardless, and now
+the first flush doubles as the support probe.
+
+**Graceful shutdown had to be taught about the streams.** `nitrokit.Run` gives
+in-flight requests a 10 s drain, and an open `/events` response is an in-flight
+request, so every restart would have waited out the full budget with even one
+device connected. The hub gained a `done` channel that its handlers select on,
+closed from `RegisterOnShutdown` (through `sync.OnceFunc`, since both listeners
+register the same closer). The database closes only after `Run` returns —
+handlers are still querying it throughout the drain.
+
+**What this buys, beyond deleting code.** The hand-rolled `failLimiter` (~60
+lines, including its own map-eviction logic) and `clientIP` are gone for
+`nitrokit.FailLimiter` and `ProxyTrust.ClientIP`, which are the same algorithms
+with tests behind them. New, rather than merely relocated: real connection
+timeouts, graceful shutdown, a `Permissions-Policy` header, `Cache-Control:
+no-cache` on every HTML response (the house rule the file server was quietly
+violating — the shell names every asset URL, so a stale shell is what strands a
+client on old CSS), and a working container health check. The last one was
+previously recorded in `docker-compose.yaml` as impossible: distroless has no
+shell for a `CMD-SHELL` probe. `nitrokit.HealthProbe` behind a `-healthcheck`
+flag makes the binary probe itself, so no shell is needed.
+
+**Accepted cost: three new transitive dependencies.** nitrokit depends on
+`golang.org/x/crypto` for ACME, which pulls `x/net` and `x/text`. ownvault
+never calls `RunTLS`, so this is dead weight in the binary — accepted because
+they are `golang.org/x` modules and the alternative is keeping the duplicated
+infrastructure this effort exists to remove.
+
 ## The website is a separate module, and has no JavaScript (2026-08)
 
 `site/` holds the public website: a landing page and a contact form. Three

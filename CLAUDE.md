@@ -150,14 +150,35 @@ The server is the vault's off-device backup, and it only ever holds ciphertext.
 Offline *operation* is unaffected: once installed, the PWA works fully offline
 and catches up when the server returns.
 
+The server's HTTP infrastructure comes from
+`github.com/hammondus/nitrokit` (pinned): lifecycle (`NewServer`/`Run`),
+`SecureHeaders`, `HSTS`, `WriteBudget`, `ProxyTrust`, `FailLimiter`,
+`WriteJSON`, `NoCache`, `Healthz`/`HealthProbe`. The sync handlers, per-vault
+write auth, the SSE hub, and the TLS redirect stay local. See
+DESIGN-DECISIONS.md "The server infrastructure comes from nitrokit" before
+changing any of it — several nitrokit defaults are deliberately overridden.
+
 Server hardening (in `main.go` — keep these when touching handlers):
 
 - Every response carries a strict CSP (`script-src 'self' 'wasm-unsafe-eval'`
   — the wasm allowance admits only WebAssembly compilation for the Argon2id
   module, never JS eval; no inline scripts;
-  `manifest-src 'self' blob:` for the client-generated manifest) plus
-  nosniff / frame-deny / no-referrer; HSTS on the TLS listener only. The app
-  must stay CSP-clean: no inline scripts, styles, or `hx-on` attributes.
+  `manifest-src 'self' blob:` for the client-generated manifest) plus nosniff,
+  `Referrer-Policy: same-origin`, and a Permissions-Policy that allows only
+  same-origin camera (the in-page QR scanner). The CSP and the policy are both
+  passed to `SecureHeaders` explicitly — its defaults would block the WASM
+  module and the camera. `frame-ancestors 'none'` in the CSP is what denies
+  framing; there is deliberately no `X-Frame-Options`. HSTS goes out on the
+  mkcert TLS listener and, via `hstsWhenProxied`, when a reverse proxy reports
+  it terminated TLS. The app must stay CSP-clean: no inline scripts, styles, or
+  `hx-on` attributes.
+- HTML responses (the shell and every htmx fragment) are served `no-cache`;
+  assets keep the file server's defaults. A stale shell names stale asset URLs.
+- `/events` streams must flush through `http.NewResponseController(w)`, never a
+  `w.(http.Flusher)` assertion: the handler runs inside `WriteBudget`, whose
+  wrapper forwards flushing through `Unwrap` without implementing `Flusher`.
+  The hub is closed from `RegisterOnShutdown` so open streams don't hold the
+  10 s drain.
 - Token comparison is constant-time (`crypto/subtle`).
 - `/api/meta` and `/api/push` bodies are capped (`http.MaxBytesReader`) so one
   client/tenant can't fill a shared server's disk or RAM.

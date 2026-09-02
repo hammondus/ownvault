@@ -46,7 +46,9 @@ go build -o ownvault .             # production: single binary, web/ embedded
 Flags: `-addr` (HTTP, default `:8080`), `-db` (SQLite path, default
 `ownvault.db` beside the executable), `-token` or env `OWNVAULT_TOKEN` (require
 a shared secret on all `/api/*` calls), `-tlsaddr` (HTTPS, default `:8443`, used
-when cert/key exist), `-cert`/`-key`.
+when cert/key exist), `-cert`/`-key`, `-healthcheck` (probe a running server's
+`/healthz` and exit — the container HEALTHCHECK runs the binary this way,
+because the distroless image has no shell).
 
 The SQLite driver is the pure-Go `modernc.org/sqlite` (no CGo), so the single
 binary cross-compiles and Docker images stay tiny. There is no build step for

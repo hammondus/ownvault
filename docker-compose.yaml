@@ -62,8 +62,9 @@ services:
       # the URL can tamper with or delete the (encrypted) vaults.
       OWNVAULT_TOKEN: "${OWNVAULT_TOKEN:?set OWNVAULT_TOKEN in .env (openssl rand -hex 16) — public sync must not run open}"
     # The image CMD already runs -addr :8080 -db /data/ownvault.db; nothing to
-    # override. No healthcheck: distroless has no shell or curl for a
-    # CMD-SHELL probe — `make smoke` probes from outside instead.
+    # override. The HEALTHCHECK lives in the Dockerfile: the binary probes its
+    # own /healthz with -healthcheck, which needs no shell. `make smoke` still
+    # probes from outside, which is the check that covers the proxy too.
 
   # The staging copy. Opt-in via the profile, so a plain `docker compose up -d`
   # on the production host can never start it by accident.

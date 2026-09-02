@@ -18,8 +18,10 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"database/sql"
 	"embed"
 	"encoding/base64"
@@ -37,6 +39,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hammondus/nitrokit"
 	_ "modernc.org/sqlite"
 	"rsc.io/qr"
 )
@@ -55,6 +58,33 @@ const (
 // tokenless — see the /events handler).
 const maxSSEClients = 256
 
+// sseWriteBudget is how long a single write to a client may make no progress
+// before the connection is killed. It replaces the server's WriteTimeout,
+// which must be 0 on a server that streams (see newVaultServer).
+const sseWriteBudget = 30 * time.Second
+
+// Browser-side defence in depth, passed to nitrokit.SecureHeaders explicitly
+// rather than taking its defaults: both defaults are wrong for this app.
+const (
+	// The policy can be strict because the app needs nothing exotic: all
+	// scripts and styles are same-origin files (no inline, no eval — htmx 2
+	// works without it). 'wasm-unsafe-eval' admits ONLY WebAssembly
+	// compilation (the Argon2id KDF module), not JS eval, so the
+	// string-to-code paths stay blocked. blob: appears twice: manifest-src for
+	// the client-generated manifest carrying the vault name (see app.js), and
+	// img-src for the setup-code QR, which arrives as an authenticated fetch
+	// and is shown via an object URL (a plain <img src> can't carry the auth
+	// header).
+	vaultCSP = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob:; " +
+		"connect-src 'self'; manifest-src 'self' blob:; worker-src 'self'; " +
+		"object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+
+	// nitrokit's default denies camera outright, which would break the in-page
+	// QR scanner that reads a setup code or a site's 2FA enrolment code
+	// (vaultui.js startScan). Same-origin only; nothing is ever framed.
+	vaultPermissions = "geolocation=(), camera=(self), microphone=(), interest-cohort=()"
+)
+
 // Token auth rate limiting: after authFailLimit failed token attempts from
 // one IP within authFailWindow, further attempts from that IP get 429 until
 // the window rolls over — and crucially, without running the compare, so an
@@ -64,7 +94,6 @@ const maxSSEClients = 256
 const (
 	authFailLimit  = 10
 	authFailWindow = 15 * time.Minute
-	authFailMaxIPs = 4096 // memory cap on tracked IPs (sweep, then evict)
 )
 
 // minTokenLen rejects throwaway tokens at startup. The rate limiter above
@@ -86,9 +115,18 @@ var embedded embed.FS
 type hub struct {
 	mu      sync.Mutex
 	clients map[chan string]string // channel -> vault id it watches
+	done    chan struct{}          // closed to release every stream
 }
 
-func newHub() *hub { return &hub{clients: make(map[chan string]string)} }
+func newHub() *hub {
+	return &hub{clients: make(map[chan string]string), done: make(chan struct{})}
+}
+
+// close releases every open stream. A server-sent event response is an
+// in-flight request as far as graceful shutdown is concerned, so without this
+// each connected device would hold the whole drain budget on every restart.
+// Registered with http.Server.RegisterOnShutdown; see main.
+func (h *hub) close() { close(h.done) }
 
 // add registers a subscriber, or returns nil when the server is already at
 // its connection cap (the caller should reject the request).
@@ -259,7 +297,18 @@ func main() {
 	dbPath := flag.String("db", "", "SQLite database path (default: ownvault.db next to the executable)")
 	token := flag.String("token", os.Getenv("OWNVAULT_TOKEN"), "shared-secret bearer token required for sync (recommended when public); env OWNVAULT_TOKEN")
 	plainHTTP := flag.Bool("plainhttp", false, "keep serving plain HTTP to non-localhost clients even when the TLS listener is up (e.g. HTTPS port firewalled, or TLS terminated elsewhere)")
+	healthcheck := flag.Bool("healthcheck", false, "probe the running server's /healthz and exit; backs the container HEALTHCHECK")
 	flag.Parse()
+
+	// The image is distroless: no shell, no curl, nothing a CMD-SHELL probe
+	// could run. So the container health check runs this same binary with
+	// -healthcheck, which dials loopback on -addr and exits by the result.
+	if *healthcheck {
+		if err := nitrokit.HealthProbe(*addr); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	// A short token invites online guessing that the rate limiter only slows.
 	// Refuse at startup rather than warn: a warning in a Docker log is never
@@ -293,13 +342,22 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Sync API. auth() enforces the token when one is configured, with a
-	// shared per-IP failure limiter across all four endpoints.
-	limiter := newFailLimiter()
-	mux.HandleFunc("/api/state", auth(*token, limiter, st.handleState))
-	mux.HandleFunc("/api/meta", auth(*token, limiter, st.handleMeta(h)))
-	mux.HandleFunc("/api/pull", auth(*token, limiter, st.handlePull))
-	mux.HandleFunc("/api/push", auth(*token, limiter, st.handlePush(h)))
-	mux.HandleFunc("/api/setupqr", auth(*token, limiter, handleSetupQR))
+	// shared per-client failure limiter across every endpoint.
+	limiter := nitrokit.NewFailLimiter(authFailLimit, authFailWindow)
+	// Deployed behind Nginx Proxy Manager, so a request's peer is the proxy on
+	// a private Docker network. Trusting private peers is what keeps the
+	// limiter bucketing by real client instead of collapsing every device into
+	// one bucket; a public peer's forwarding headers are still ignored.
+	trust := nitrokit.TrustPrivateProxies()
+	mux.HandleFunc("/api/state", auth(*token, limiter, trust, st.handleState))
+	mux.HandleFunc("/api/meta", auth(*token, limiter, trust, st.handleMeta(h)))
+	mux.HandleFunc("/api/pull", auth(*token, limiter, trust, st.handlePull))
+	mux.HandleFunc("/api/push", auth(*token, limiter, trust, st.handlePush(h)))
+	mux.HandleFunc("/api/setupqr", auth(*token, limiter, trust, handleSetupQR))
+
+	// Liveness only, and deliberately unauthenticated: it reports that the
+	// process is serving, which anyone who can reach the port already knows.
+	mux.HandleFunc("GET /healthz", nitrokit.Healthz)
 
 	// Server-sent events: keepalive pings plus "changed" notifications when
 	// another device writes. Deliberately unauthenticated even when a token is
@@ -307,11 +365,17 @@ func main() {
 	// EventSource can't send auth headers, and the template's reachability code
 	// relies on it. Acting on a notification (pulling) still requires the token.
 	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
-		fl, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		// ?vault=<id> scopes the "changed" notifications to one vault. The
+		// reachability probe in app.js connects without it and just rides the
+		// keepalive pings below. Checked before anything is written, so a
+		// server at its cap can still answer with a real status.
+		ch := h.add(strings.TrimSpace(r.URL.Query().Get("vault")))
+		if ch == nil {
+			http.Error(w, "too many connections", http.StatusServiceUnavailable)
 			return
 		}
+		defer h.remove(ch)
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-store")
 		// nginx (e.g. Nginx Proxy Manager terminating TLS in front of this)
@@ -321,18 +385,24 @@ func main() {
 		// ignore it.
 		w.Header().Set("X-Accel-Buffering", "no")
 
-		// ?vault=<id> scopes the "changed" notifications to one vault. The
-		// reachability probe in app.js connects without it and just rides the
-		// keepalive pings below.
-		ch := h.add(strings.TrimSpace(r.URL.Query().Get("vault")))
-		if ch == nil {
-			http.Error(w, "too many connections", http.StatusServiceUnavailable)
+		// http.ResponseController, NOT a w.(http.Flusher) assertion: this
+		// handler runs inside nitrokit.WriteBudget, whose ResponseWriter
+		// wrapper forwards flushing through Unwrap but does not itself
+		// implement http.Flusher — the assertion would fail and every stream
+		// would 500. The first flush doubles as the support probe and commits
+		// the headers above, so the client sees the stream open immediately;
+		// an unflushable writer reports ErrNotSupported without committing
+		// anything, leaving the error path a clean 500.
+		rc := http.NewResponseController(w)
+		if err := rc.Flush(); err != nil {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 			return
 		}
-		defer h.remove(ch)
 
 		fmt.Fprintf(w, "retry: 3000\n\nevent: ping\ndata: {}\n\n")
-		fl.Flush()
+		if err := rc.Flush(); err != nil {
+			return
+		}
 
 		tick := time.NewTicker(25 * time.Second)
 		defer tick.Stop()
@@ -340,16 +410,22 @@ func main() {
 			select {
 			case <-r.Context().Done():
 				return
+			case <-h.done: // server draining
+				return
 			case msg := <-ch:
 				if _, err := fmt.Fprintf(w, "event: changed\ndata: %s\n\n", msg); err != nil {
 					return
 				}
-				fl.Flush()
+				if err := rc.Flush(); err != nil {
+					return
+				}
 			case <-tick.C:
 				if _, err := fmt.Fprintf(w, "event: ping\ndata: {}\n\n"); err != nil {
 					return
 				}
-				fl.Flush()
+				if err := rc.Flush(); err != nil {
+					return
+				}
 			}
 		}
 	})
@@ -361,32 +437,54 @@ func main() {
 			name = "index.html"
 		}
 		if _, err := fs.Stat(webRoot, name); err == nil {
+			// House rule: HTML always revalidates. The shell and every htmx
+			// fragment name the asset URLs they load, so serving one stale is
+			// exactly what strands a client on old CSS or JS. The file server
+			// sends Last-Modified, so a revalidation costs a 304, not a
+			// re-transfer. Assets keep the file server's own defaults.
+			if strings.HasSuffix(name, ".html") {
+				nitrokit.NoCache(w)
+			}
 			files.ServeHTTP(w, r)
 			return
 		}
+		// Not a real file, so it is an app route (/settings, ...): serve the
+		// shell and let the client load the matching fragment.
+		nitrokit.NoCache(w)
 		http.ServeFileFS(w, r, webRoot, "index.html")
 	})
 
-	handler := secureHeaders(mux)
+	// One chokepoint for the browser-side headers, wrapped in the write
+	// budget that stands in for the zeroed WriteTimeout (see newVaultServer).
+	handler := nitrokit.WriteBudget(sseWriteBudget,
+		nitrokit.SecureHeaders(vaultCSP, vaultPermissions, mux))
 
 	// Serve HTTPS as well when mkcert files are present — service workers
 	// (and PWA install) require a secure context on anything but localhost.
+	// The keypair is loaded here rather than by the listener so a broken cert
+	// fails at startup with a clear message instead of on the first request.
+	var servers []*http.Server
 	tlsUp := false
 	tlsPort := ""
-	if _, err := os.Stat(*certFile); err == nil {
-		if _, err := os.Stat(*keyFile); err == nil {
-			tlsUp = true
-			if _, p, err := net.SplitHostPort(*tlsAddr); err == nil {
-				tlsPort = p
-			}
-			go func() {
-				log.Printf("listening on https://localhost%s", *tlsAddr)
-				log.Fatal(http.ListenAndServeTLS(*tlsAddr, *certFile, *keyFile, handler))
-			}()
+	_, certErr := os.Stat(*certFile)
+	_, keyErr := os.Stat(*keyFile)
+	if certErr == nil && keyErr == nil {
+		cert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
+		if err != nil {
+			log.Fatalf("load TLS keypair: %v", err)
 		}
+		tlsUp = true
+		if _, p, err := net.SplitHostPort(*tlsAddr); err == nil {
+			tlsPort = p
+		}
+		// This listener terminates TLS itself, so it owns the HSTS policy.
+		tlsSrv := newVaultServer(*tlsAddr, nitrokit.HSTS(handler))
+		tlsSrv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+		servers = append(servers, tlsSrv)
+		log.Printf("listening on https://localhost%s", *tlsAddr)
 	}
 
-	httpHandler := handler
+	httpHandler := hstsWhenProxied(handler)
 	if tlsUp && !*plainHTTP {
 		// With TLS up, plain HTTP stays available only for loopback (desktop
 		// dev, where HTTP is already a secure context). Everything else — e.g.
@@ -394,39 +492,60 @@ func main() {
 		// the sync token and ciphertext never travel in the clear. -plainhttp
 		// opts out for setups where the redirect would strand clients (HTTPS
 		// port not published/firewalled, or TLS handled by a proxy).
-		httpHandler = redirectToTLS(handler, tlsPort)
+		httpHandler = redirectToTLS(httpHandler, tlsPort)
+	}
+	servers = append(servers, newVaultServer(*addr, httpHandler))
+
+	// Release the event streams the moment the drain starts. Each open
+	// /events response is an in-flight request, so without this every restart
+	// would wait out the full 10s shutdown budget. OnceFunc because both
+	// listeners register the same closer.
+	closeStreams := sync.OnceFunc(h.close)
+	for _, srv := range servers {
+		srv.RegisterOnShutdown(closeStreams)
 	}
 
 	log.Printf("listening on http://localhost%s (dev=%v, auth=%v)", *addr, *dev, *token != "")
-	log.Fatal(http.ListenAndServe(*addr, httpHandler))
+	runErr := nitrokit.Run(context.Background(), servers...)
+	// Close the database only after Run returns: handlers are still querying
+	// it throughout the drain.
+	if err := st.db.Close(); err != nil {
+		log.Printf("close db: %v", err)
+	}
+	if runErr != nil {
+		log.Fatal(runErr)
+	}
+	log.Print("shutdown complete")
 }
 
-// secureHeaders adds browser-side defence-in-depth to every response. The CSP
-// can be strict because the app needs nothing exotic: all scripts and styles
-// are same-origin files (no inline, no eval — htmx 2 works without it), and
-// the only non-'self' source is the blob: manifest that carries the
-// client-side vault name (see app.js). HSTS is sent on the TLS listener and
-// when a reverse proxy reports it terminated TLS (X-Forwarded-Proto) — the
-// documented public deployment, where r.TLS is nil here. Trusting that header
-// is safe for HSTS specifically: browsers ignore the header when it arrives
-// over an insecure connection, so spoofing it on plain HTTP does nothing.
-func secureHeaders(next http.Handler) http.Handler {
+// newVaultServer applies nitrokit's house timeouts, then the two overrides
+// this workload needs.
+func newVaultServer(addr string, h http.Handler) *http.Server {
+	srv := nitrokit.NewServer(addr, h)
+	// /events is an open-ended stream, and a whole-response write timeout
+	// would cut it. nitrokit.WriteBudget restores per-write slow-client
+	// protection in its place.
+	srv.WriteTimeout = 0
+	// The house 15s bounds the whole request body, and /api/push accepts up to
+	// maxPushBytes for a full-vault restore — which 15s would need a ~4.5
+	// Mbit/s uplink to finish. Two minutes lets a slow mobile link through
+	// while still bounding how long a trickling connection holds a goroutine.
+	srv.ReadTimeout = 2 * time.Minute
+	return srv
+}
+
+// hstsWhenProxied sends HSTS on the plain-HTTP listener when a reverse proxy
+// reports that it terminated TLS. nitrokit.HSTS covers the listener that
+// terminates TLS itself; this covers the documented public deployment, where
+// Nginx Proxy Manager terminates and r.TLS is nil here. Trusting the header is
+// safe for HSTS specifically: a browser ignores the header when it arrives
+// over an insecure connection, so spoofing it on plain HTTP achieves nothing.
+func hstsWhenProxied(next http.Handler) http.Handler {
+	secure := nitrokit.HSTS(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		// 'wasm-unsafe-eval' admits ONLY WebAssembly compilation (the Argon2id
-		// KDF module), not JS eval — the string-to-code paths stay blocked.
-		h.Set("Content-Security-Policy",
-			// img-src blob: is for the setup-code QR, which arrives as an
-			// authenticated fetch and is shown via an object URL (a plain
-			// <img src> can't carry the auth header).
-			"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob:; "+
-				"connect-src 'self'; manifest-src 'self' blob:; worker-src 'self'; "+
-				"object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "no-referrer")
-		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-			h.Set("Strict-Transport-Security", "max-age=31536000")
+		if r.Header.Get("X-Forwarded-Proto") == "https" {
+			secure.ServeHTTP(w, r)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -471,110 +590,15 @@ func defaultDBPath() string {
 
 /* ==================== auth ==================== */
 
-// failLimiter counts failed token attempts per client IP. Guarded by a plain
-// mutex: auth failures are rare and cheap, so contention is a non-issue.
-type failLimiter struct {
-	mu    sync.Mutex
-	fails map[string]*failTrack
-}
-
-type failTrack struct {
-	count       int
-	windowStart time.Time
-}
-
-func newFailLimiter() *failLimiter {
-	return &failLimiter{fails: make(map[string]*failTrack)}
-}
-
-// blocked reports whether ip has exhausted its failure budget for the
-// current window. Expired windows are reset here, lazily.
-func (l *failLimiter) blocked(ip string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	t, ok := l.fails[ip]
-	if !ok {
-		return false
-	}
-	if time.Since(t.windowStart) >= authFailWindow {
-		delete(l.fails, ip)
-		return false
-	}
-	return t.count >= authFailLimit
-}
-
-// fail records one failed attempt from ip.
-func (l *failLimiter) fail(ip string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	t, ok := l.fails[ip]
-	if !ok || time.Since(t.windowStart) >= authFailWindow {
-		// Sweep expired entries before growing the map, and if a flood of
-		// distinct IPs (a botnet) keeps it full anyway, evict arbitrary
-		// entries: losing a counter weakens limiting far less than letting
-		// the map grow without bound weakens the server.
-		if len(l.fails) >= authFailMaxIPs {
-			for k, v := range l.fails {
-				if time.Since(v.windowStart) >= authFailWindow {
-					delete(l.fails, k)
-				}
-			}
-			for k := range l.fails {
-				if len(l.fails) < authFailMaxIPs {
-					break
-				}
-				delete(l.fails, k)
-			}
-		}
-		l.fails[ip] = &failTrack{count: 1, windowStart: time.Now()}
-		return
-	}
-	t.count++
-}
-
-// pass clears ip's counter after a successful auth, so a person who fumbles
-// the token a few times while setting up isn't still carrying the strikes.
-func (l *failLimiter) pass(ip string) {
-	l.mu.Lock()
-	delete(l.fails, ip)
-	l.mu.Unlock()
-}
-
-// clientIP picks the address the limiter buckets by. Direct connections use
-// RemoteAddr, which TCP makes unspoofable. When the connection comes from
-// loopback or private space — the documented reverse-proxy deployment —
-// RemoteAddr is the proxy and would put every client in one bucket, so the
-// rightmost X-Forwarded-For value is used instead: that one was appended by
-// the proxy itself and names its immediate client, while values further left
-// arrived from the outside and cost an attacker nothing to forge. A public
-// RemoteAddr ignores the header entirely for the same reason.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !(ip.IsLoopback() || ip.IsPrivate()) {
-		return host
-	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {
-			return last
-		}
-	}
-	return host
-}
-
 // auth wraps a handler so it requires the bearer token when one is configured.
 // With no token set (typical for localhost/LAN), it's a pass-through.
-func auth(token string, limiter *failLimiter, next http.HandlerFunc) http.HandlerFunc {
+func auth(token string, limiter *nitrokit.FailLimiter, trust *nitrokit.ProxyTrust, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if token != "" {
-			ip := clientIP(r)
+			ip := trust.ClientIP(r).String()
 			// Refuse before comparing: an over-limit request must not learn
 			// whether its guess was right, or the 429 would slow nothing.
-			if limiter.blocked(ip) {
+			if limiter.Blocked(ip) {
 				http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 				return
 			}
@@ -587,19 +611,14 @@ func auth(token string, limiter *failLimiter, next http.HandlerFunc) http.Handle
 			// Constant-time compare: the token is the only gate between the
 			// internet and write access, so don't leak match length via timing.
 			if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
-				limiter.fail(ip)
+				limiter.Fail(ip)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			limiter.pass(ip)
+			limiter.Pass(ip)
 		}
 		next(w, r)
 	}
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 // vaultID reads the opaque per-vault namespace key the client sends on every
@@ -714,7 +733,7 @@ func (s *store) handleState(w http.ResponseWriter, r *http.Request) {
 	if v != "" {
 		_ = s.db.QueryRow(`SELECT COUNT(*) FROM meta WHERE vault_id = ?`, v).Scan(&n)
 	}
-	writeJSON(w, map[string]any{"rev": rev, "hasMeta": n > 0})
+	nitrokit.WriteJSON(w, http.StatusOK, map[string]any{"rev": rev, "hasMeta": n > 0})
 }
 
 // handleSetupQR renders the client-composed setup code as a QR PNG. The code
@@ -805,7 +824,7 @@ func (s *store) handleMeta(h *hub) http.HandlerFunc {
 				return
 			}
 			h.broadcast(vault, fmt.Sprintf(`{"rev":%d}`, rev))
-			writeJSON(w, map[string]any{"rev": rev})
+			nitrokit.WriteJSON(w, http.StatusOK, map[string]any{"rev": rev})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -858,7 +877,7 @@ func (s *store) handlePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp["rev"] = rev
-	writeJSON(w, resp)
+	nitrokit.WriteJSON(w, http.StatusOK, resp)
 }
 
 // POST /api/push: apply the client's dirty entries with optimistic
@@ -969,6 +988,6 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 		if changed {
 			h.broadcast(vault, fmt.Sprintf(`{"rev":%d}`, rev))
 		}
-		writeJSON(w, map[string]any{"rev": rev, "results": results})
+		nitrokit.WriteJSON(w, http.StatusOK, map[string]any{"rev": rev, "results": results})
 	}
 }
