@@ -21,6 +21,17 @@
 </head>
 <body>
 
+  <!-- Icon sprite. The iOS Share glyph appears in every Add-to-Home-Screen
+       step list (lock gate and the Settings fragment), so the path lives here
+       once and each site references it with <use>. -->
+  <svg class="svg-sprite" aria-hidden="true" focusable="false">
+    <symbol id="icon-ios-share" viewBox="0 0 24 24">
+      <path d="M12 3.5v11" />
+      <path d="M8.5 7 12 3.5 15.5 7" />
+      <path d="M7.5 10.5H6A1.5 1.5 0 0 0 4.5 12v7A1.5 1.5 0 0 0 6 20.5h12a1.5 1.5 0 0 0 1.5-1.5v-7a1.5 1.5 0 0 0-1.5-1.5h-1.5" />
+    </symbol>
+  </svg>
+
   <!-- Fixed top bar: stays in place while the screen content scrolls -->
   <header class="app-header">
     <h1>Own Vault</h1>
@@ -124,11 +135,36 @@
         <!-- iOS only, and only in Safari rather than the installed app: the
              Home Screen app gets its own storage, so connecting here does not
              carry over. Revealed by vaultui.js showLock. -->
-        <p id="connect-install-hint" class="lock-hint lock-hint-warn" hidden>
-          On iPhone and iPad, add this page to your Home Screen
-          <strong>before</strong> you connect. The Home Screen app has its own
-          storage, so this setup does not carry over to it.
-        </p>
+        <div id="connect-install-hint" hidden>
+          <p class="lock-hint lock-hint-warn">
+            On iPhone and iPad, add this page to your Home Screen
+            <strong>before</strong> you connect. The Home Screen app has its own
+            storage, so this setup does not carry over to it.
+          </p>
+          <!-- Telling someone to install without saying how is half an
+               instruction. <details> keeps the connect form uncluttered for
+               people who already know, with no JS and nothing for the CSP to
+               block. Keep these steps in step with the two other copies (the
+               welcome/connected panel above, and the Settings install card). -->
+          <details class="lock-details">
+            <summary>How to add it to the Home Screen</summary>
+            <ol class="lock-install-steps">
+              <li>Tap the <strong>Share</strong> button
+                <svg class="ios-share-icon" aria-hidden="true" focusable="false"><use href="#icon-ios-share" /></svg>
+                — a square with an arrow pointing out of it. It's in the bar at
+                the bottom of the screen, or at the top right if Safari's
+                address bar sits at the top.</li>
+              <li><strong>Scroll down</strong> the panel that slides up. The
+                row of apps is not the whole list — <strong>Add to Home
+                Screen</strong> is further down, which is the step most people
+                miss.</li>
+              <li>Tap <strong>Add to Home Screen</strong>, then tap
+                <strong>Add</strong> at the top right.</li>
+              <li>Open Own Vault from its new Home Screen icon, then connect
+                it there.</li>
+            </ol>
+          </details>
+        </div>
         <p id="connect-error" class="lock-error" hidden></p>
         <button class="btn lock-btn" type="submit">Connect</button>
         <!-- Revealed by showLock only when getUserMedia exists (secure context). -->
@@ -168,10 +204,19 @@
             <p class="lock-hint">Add it to your Home Screen for full-screen,
               offline access — in <strong>Safari</strong>:</p>
             <ol class="lock-install-steps">
-              <li>Tap the <strong>Share</strong> button (the square with an
-                upward arrow).</li>
-              <li>Choose <strong>Add to Home Screen</strong>.</li>
-              <li>Tap <strong>Add</strong>.</li>
+              <li>Tap the <strong>Share</strong> button
+                <svg class="ios-share-icon" aria-hidden="true" focusable="false"><use href="#icon-ios-share" /></svg>
+                — a square with an arrow pointing out of it. It's in the bar at
+                the bottom of the screen, or at the top right if Safari's
+                address bar sits at the top.</li>
+              <li><strong>Scroll down</strong> the panel that slides up. The
+                row of apps is not the whole list — <strong>Add to Home
+                Screen</strong> is further down, which is the step most people
+                miss.</li>
+              <li>Tap <strong>Add to Home Screen</strong>, then tap
+                <strong>Add</strong> at the top right.</li>
+              <li>Open Own Vault from its new Home Screen icon. Use that icon
+                from now on, not this Safari tab.</li>
             </ol>
             <p class="lock-hint">Other iOS browsers can't install to the Home
               Screen — open this page in Safari first.</p>

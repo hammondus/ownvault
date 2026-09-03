@@ -414,8 +414,13 @@ body.nav-pinned .menu-btn-bar {
   background: var(--bar-bg);
   color: #fff;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  /* Scrolls when a step is taller than the screen — the Add-to-Home-Screen
+     instructions on a short phone, say. body.locked freezes the page behind,
+     so without this the overflow is simply unreachable. Centring is done with
+     `margin: auto` on .lock-card rather than align/justify-content: an
+     overflowing flex item centred that way has its top clipped, and the
+     clipped part cannot be scrolled back to. */
+  overflow-y: auto;
   padding: 24px;
 }
 
@@ -428,6 +433,9 @@ body.locked {
   width: 100%;
   max-width: 340px;
   text-align: center;
+  /* Centres in both axes while it fits, and collapses to a plain top-aligned
+     block once it overflows — see .lock-screen. */
+  margin: auto;
 }
 
 .lock-logo {
@@ -550,6 +558,10 @@ body.locked {
   font-size: 0.85rem;
   line-height: 1.5;
   opacity: 0.85;
+  /* The lock gate centres its text, which is fine for one-line prompts and
+     poor for multi-line numbered instructions — the eye loses the left edge
+     between steps. */
+  text-align: left;
 }
 
 .lock-install-steps li {
@@ -569,6 +581,44 @@ body.locked {
 
 .install-done {
   font-weight: 600;
+}
+
+/* The <symbol> definitions at the top of the shell: present in the DOM so
+   <use> can reach them, never rendered themselves. */
+.svg-sprite {
+  display: none;
+}
+
+/* iOS Share glyph, inline in the Add-to-Home-Screen steps. Sized in em and
+   drawn in currentColor so it tracks the surrounding text in both schemes and
+   both the dark lock gate and the light Settings card. */
+.ios-share-icon {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.15em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Collapsible "how to" on the connect step: the instructions are there for a
+   first-timer without pushing the Connect button off the screen for everyone
+   else. Native <details> — no JS, nothing for the CSP to block. */
+.lock-details {
+  margin: 0 0 16px;
+  font-size: 0.8rem;
+}
+
+.lock-details > summary {
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--accent);
+}
+
+.lock-details[open] > summary {
+  margin-bottom: 4px;
 }
 
 /* display:block below would override the [hidden] attribute (same trap as

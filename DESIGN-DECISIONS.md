@@ -37,6 +37,26 @@ Alongside the warning is a **Copy setup code** button, which turns "set it up
 again" into one paste plus the master password. `Sync.makeSetupCode()` needs no
 vault key, so it works on the locked gate.
 
+The Add-to-Home-Screen steps name the two places a first-timer stops: where the
+Share button is (bottom bar, or top right if the address bar was moved), and
+that the share panel scrolls — the row of apps is not the whole list. The iOS
+Share glyph is inline so "square with an arrow" is unambiguous; its path lives
+once as an SVG `<symbol>` at the top of the shell, referenced by `<use>`,
+which reaches the Settings fragment too because htmx swaps it into the same
+document. The step list itself exists three times (the connect step's
+`<details>`, the welcome/connected panel, the Settings card) — static HTML that
+survives with JS off, at the cost of keeping three copies in step. Each carries
+a comment saying so.
+
+Finding this exposed a latent bug: `.lock-screen` was a fixed, centred flex
+container with no `overflow`, and `body.locked` freezes the page behind it, so
+any step taller than the viewport had its overflow simply unreachable. It now
+scrolls, and `.lock-card` centres with `margin: auto` rather than
+`align-items`/`justify-content: center` — an overflowing flex item centred that
+way has its top clipped with no way to scroll back to it. On a 375x667 iPhone
+SE the connect step is 897 px tall, so this was reachable before the longer
+steps, just harder to hit.
+
 The panel's lead sentence is set by `setWelcomeLead()` rather than written into
 the markup, because it has to agree with what `updateInstallUI` decided: on a
 browser that cannot install, or one already running installed, the panel must

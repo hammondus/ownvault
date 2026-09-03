@@ -341,7 +341,12 @@ Supporting flows the above depends on:
   moment the user knows the device is newly attached. On iOS the Home Screen
   app gets its own storage, so the installed app starts with no vault: the
   connect step warns *before* the setup is spent, and the install steps carry
-  the warning plus a **Copy setup code** button. Chromium installs are assumed
+  the warning plus a **Copy setup code** button. The Add-to-Home-Screen steps
+  exist in three places (the connect step's `<details>`, the welcome/connected
+  panel, the Settings card) and must stay in step; the iOS Share glyph is one
+  SVG `<symbol>` in the shell, referenced by `<use>`. The lock gate scrolls
+  (`.lock-screen` `overflow-y: auto` with `.lock-card` centred by
+  `margin: auto`) — steps taller than the screen were unreachable before. Chromium installs are assumed
   to share the browser's storage, so they get no such warning — that half is
   untested (iPhone is the only mobile platform this project has run on). See
   DESIGN-DECISIONS.md "Install prompt after connecting".
