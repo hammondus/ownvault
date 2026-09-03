@@ -37,6 +37,16 @@
 #   OWNVAULT_TAG=<git sha>                  # machine-managed: `make promote`
 #   OWNVAULT_STAGING_TAG=<git sha>          # machine-managed: `make deploy-staging`
 
+# The project name is pinned rather than left to default to the directory
+# basename. Compose groups containers by project label, so an unrelated stack
+# checked out into a directory of the same name joins this project, and each
+# reports the other's containers as orphans — whereupon Compose suggests
+# `--remove-orphans`, which here would delete a running vault server. Pinning
+# also survives renaming the clone directory. The value matches what the
+# deployed containers already carry, so setting it restarts nothing.
+
+name: ownvault
+
 # Everything the two instances share. An anchor rather than a second service
 # block: a staging copy that has drifted from production is not a rehearsal.
 # The only permitted differences are the ones spelled out under
