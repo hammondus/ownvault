@@ -7,6 +7,12 @@
 // entries go in through Vault.put — the same API the add form calls, and far
 // more reliable than driving that form eight times.
 //
+// Every vault syncs (there is no offline-only mode), so a run really does
+// create a vault, with these invented logins in it, on whatever server
+// OV_APP_URL points at. Point it at a throwaway dev server — `go run . -dev`,
+// whose database lives beside the temporary build and goes away with it —
+// never at one holding real vaults.
+//
 // Playwright is a dev-only tool, installed on demand by `make shots`. The
 // site itself has no JavaScript and no node_modules.
 
@@ -53,15 +59,17 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE });
 
-  // Sync off, so the lock gate opens on "create a vault" rather than the
-  // connect step, and nothing is pushed to whatever server is on :8080.
-  await ctx.addInitScript(() => localStorage.setItem('syncEnabled', '0'));
-
   const page = await ctx.newPage();
   const shot = name => page.screenshot({ path: path.join(OUT, name + '.png') })
     .then(() => console.log('  ' + name + '.png'));
 
+  console.log('creating a demo vault on ' + APP);
   await page.goto(APP + '/');
+  // A device with no vaults opens on the CONNECT step. "Start a new vault
+  // instead" probes the server for a token it does not need here, then shows
+  // the create form.
+  await page.waitForSelector('#connect-form:not([hidden])', { timeout: 20000 });
+  await page.click('#connect-create');
   await page.waitForSelector('#create-form:not([hidden])', { timeout: 20000 });
 
   await page.fill('#create-name', 'Home');
