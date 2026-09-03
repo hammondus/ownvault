@@ -146,7 +146,21 @@
            id (multi-device / joining someone's shared server), or start a new
            one. See vaultui.js startGate / handleConnect. -->
       <form id="connect-form" class="lock-form" hidden>
-        <p class="lock-lead">Connect this device to an existing vault, or start a
+        <!-- Demo servers only (window.APP_DEMO). vaultui.js showDemoState
+             reveals this and rewrites the lead below it. On a demo, nearly
+             every visitor arrives with no vault anywhere, so creating one is
+             the primary action and joining an existing one is the secondary
+             path — the reverse of a real server, where someone reaching this
+             step usually already has the vault on another device. Without it
+             the create action was the second of three small links under a
+             prominent pair of text boxes. -->
+        <div id="connect-demo-start" hidden>
+          <p class="lock-lead">To look around, create a vault. You choose a
+            master password; there is no sign-up.</p>
+          <button id="connect-demo-create" class="btn lock-btn" type="button">Create a demo vault</button>
+          <p class="lock-or">or connect a second device</p>
+        </div>
+        <p id="connect-lead" class="lock-lead">Connect this device to an existing vault, or start a
           new one. The setup code (or Vault ID) is shown in Settings on a device
           that already has the vault.</p>
         <input id="connect-id" class="lock-input" type="text"
@@ -188,7 +202,7 @@
           </details>
         </div>
         <p id="connect-error" class="lock-error" hidden></p>
-        <button class="btn lock-btn" type="submit">Connect</button>
+        <button id="connect-submit" class="btn lock-btn" type="submit">Connect</button>
         <!-- Revealed by showLock only when getUserMedia exists (secure context). -->
         <button id="connect-scan" class="lock-link" type="button" hidden>Scan setup code with the camera</button>
         <button id="connect-create" class="lock-link" type="button">Start a new vault instead</button>

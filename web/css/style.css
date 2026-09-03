@@ -607,6 +607,43 @@ body.locked {
   margin-top: 4px;
 }
 
+/* "or connect a second device" — the divider between the demo's primary
+   create action and the join-an-existing-vault fields below it. Rules drawn
+   with pseudo-elements so there is no extra markup and nothing to load. */
+.lock-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 22px 0 6px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.78rem;
+}
+
+.lock-or::before,
+.lock-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Demoted primary button: still a button, but it must not compete with the
+   one action a first-time visitor wants. Used for Connect on a demo server,
+   where creating a vault is the primary action instead. */
+.lock-btn-secondary {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* A field the server has made irrelevant (the demo's access token). Disabled
+   rather than hidden: its absence would otherwise read as a missing step to
+   anyone who had been told to expect a token. */
+.lock-input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .lock-error {
   margin: 0 0 12px;
   color: #ffb4a8;

@@ -368,7 +368,11 @@
     show(byId("create-strength"), false); // fields were just cleared
     var focusId =
       mode === "create" ? "create-pw"
-        : mode === "connect" ? "connect-id"
+        : mode === "connect"
+          ? // On a demo the create button is the primary action, so the focus
+            // ring must not sit on the setup-code field and point at the path
+            // almost nobody arrives wanting. It also makes Enter create.
+            window.APP_DEMO ? "connect-demo-create" : "connect-id"
         : welcomeish ? "welcome-continue"
         : "unlock-pw";
     var focus =
@@ -791,6 +795,42 @@
       if (note) note.textContent = deleted + " Don't store real passwords in a demo vault.";
       show(card, true);
     }
+    demoConnectStep();
+  }
+
+  // Rebuild the connect step for a demo server. A real server's version leads
+  // with the fields for joining an existing vault, because that is what the
+  // person reaching it almost always wants. On a demo the reverse holds: the
+  // visitor has no vault anywhere, so "Start a new vault instead" — the second
+  // of three small links, under two prominent text boxes and a Connect button
+  // — was the one thing they needed and the hardest thing to find.
+  function demoConnectStep() {
+    show(byId("connect-demo-start"), true);
+
+    // The fields below the divider now have one purpose, so say which.
+    var lead = byId("connect-lead");
+    if (lead) {
+      lead.textContent =
+        "Its setup code is in Settings, on the device that already has the vault.";
+    }
+
+    // A demo server runs open, so the token is not merely optional here, it is
+    // meaningless. Disabled and relabelled rather than removed: someone told to
+    // expect a token should see that it has been dealt with, not wonder where
+    // it went.
+    var token = byId("connect-token");
+    if (token) {
+      token.disabled = true;
+      token.value = "";
+      token.placeholder = "Access token (not needed for demo)";
+    }
+
+    // The link is now the button above it.
+    show(byId("connect-create"), false);
+
+    // Connect stops being the loudest control on the step.
+    var submit = byId("connect-submit");
+    if (submit) submit.classList.add("lock-btn-secondary");
   }
 
   // The vault name is both the installed-app name (App, in app.js — local +
@@ -1898,6 +1938,7 @@
   byId("unlock-form").addEventListener("submit", handleUnlock);
   byId("connect-form").addEventListener("submit", handleConnect);
   byId("connect-create").addEventListener("click", handleConnectCreate);
+  byId("connect-demo-create").addEventListener("click", handleConnectCreate);
   byId("connect-scan").addEventListener("click", startConnectScan);
   byId("scan-cancel").addEventListener("click", stopScan);
   byId("create-restore").addEventListener("click", openRestore);

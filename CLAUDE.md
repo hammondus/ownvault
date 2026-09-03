@@ -547,7 +547,10 @@ safe.
   the retention in days), never from localStorage — a stored flag would ride a
   browser profile into a real vault. The exact date rides the pull response.
   `vaultui.js` `showDemoState` fills the lock gate notice, the app-bar badge,
-  and the Settings card.
+  and the Settings card, and calls `demoConnectStep()` — which inverts the
+  connect step (create becomes a primary button, Connect an outline one, the
+  access token disabled and relabelled), because on a demo the visitor has no
+  vault anywhere. See DESIGN-DECISIONS.md "The demo server".
 
 `make deploy-demo` / `make smoke-demo` / `make logs-demo`. The demo runs
 `OWNVAULT_TAG`, so run `make deploy-demo` after `make promote`. See

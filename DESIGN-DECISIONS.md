@@ -1275,6 +1275,21 @@ the lock gate (read before anything is entered), a badge on the app bar (the
 standing reminder), and a Settings card next to the export that rescues the
 data.
 
+**The connect step inverts on a demo.** A real server's version leads with the
+fields for joining an existing vault, because someone reaching that step
+normally has the vault on another device already; "Start a new vault instead"
+is rightly a small link. On a demo the reverse holds — the visitor has no vault
+anywhere — and the same layout buried the only thing they needed as the second
+of three small links, under two prominent text boxes and a Connect button.
+`demoConnectStep()` therefore puts a "Create a demo vault" button above a
+divider, demotes Connect to an outline button, rewrites the lead so the fields
+below have a stated purpose, hides the now-duplicated link, and moves the
+initial focus to the button so Enter creates. The token field is **disabled and
+relabelled** rather than removed: a demo server runs open, so the field is not
+merely optional but meaningless, and someone told to expect a token should see
+that it has been dealt with instead of wondering where it went. All of it is
+gated on `window.APP_DEMO`, so a real server's gate is untouched.
+
 **`ipQuota` duplicates the website's contact-form limiter.** `site/` is a
 separate Go module, on purpose, so the vault server never depends on
 `mailer`. Sharing forty lines is not worth collapsing that boundary.
