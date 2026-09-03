@@ -70,11 +70,22 @@ deploy-built: docker-build
 	docker compose up -d ovsite
 	@$(MAKE) --no-print-directory smoke
 
-## smoke: the site answers over its public URL
+## smoke: the site answers over its public URL, as the site
+# See the vault Makefile's smoke target for why this is not a plain
+# `curl -sf`. The short version: a scheme-less URL makes curl assume http://
+# and `-f` passes on the redirect; and the vault serves a byte-identical `ok`
+# on /healthz, so a 200 does not prove which service answered. Matching
+# script-src 'none' — unique to siteCSP in main.go — identifies the site and
+# confirms its strongest header survived the proxy.
 smoke:
 	@test -n "$(SITE_URL)" || { echo "set OVSITE_URL in .env to smoke-test"; exit 0; }
+	@case "$(SITE_URL)" in http://*|https://*) ;; *) \
+	  echo "OVSITE_URL must include the scheme, e.g. https://$(SITE_URL)"; exit 1;; esac
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-	  curl -sf -m 10 -o /dev/null "$(SITE_URL)/healthz" && { echo "smoke ok: $(SITE_URL)"; exit 0; }; sleep 2; \
+	  h=$$(curl -sL -m 10 -o /dev/null -D - -w "status=%{http_code}" "$(SITE_URL)/healthz" 2>/dev/null); \
+	  case "$$h" in *status=200) ;; *) sleep 2; continue;; esac; \
+	  case "$$h" in *"script-src 'none'"*) echo "smoke ok: $(SITE_URL)"; exit 0;; esac; \
+	  echo "SMOKE FAILED: $(SITE_URL) answered 200 but is not the site (CSP mismatch) — check the NPM proxy host"; exit 1; \
 	done; echo "SMOKE FAILED: $(SITE_URL)/healthz not answering"; exit 1
 
 ## logs: follow the site's logs

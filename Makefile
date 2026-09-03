@@ -158,20 +158,44 @@ deploy-built:
 images:
 	@docker images ownvault --format '{{.Tag}}\t{{.CreatedSince}}\t{{.Size}}' | grep -v '^<none>' | head -20
 
-## smoke: production answers over its public URL
+## smoke: production answers over its public URL, as the vault
 # The root path serves the app shell, so a 200 proves NPM -> container -> Go
 # server end to end. Retries cover the container's startup moment.
+#
+# Three things the obvious `curl -sf URL` gets wrong here:
+#
+#   - A URL without a scheme makes curl assume http://, and `-f` treats the
+#     resulting 301 as success. The case guard rejects it outright.
+#   - Without -L, any redirect passes without the destination being fetched.
+#   - A 200 alone does not prove the VAULT answered. The website shares this
+#     box and serves an identical `ok` on /healthz, so a misrouted proxy host
+#     smoke-tests green. Matching the CSP identifies the service, and confirms
+#     the header survived the proxy. 'wasm-unsafe-eval' appears only in
+#     vaultCSP (main.go); the site's CSP says script-src 'none'.
+#
+# A 200 carrying the wrong CSP fails immediately rather than retrying: that is
+# a routing mistake, and waiting will not fix it.
 smoke:
 	@test -n "$(PROD_URL)" || { echo "set OWNVAULT_URL in .env to smoke-test"; exit 0; }
+	@case "$(PROD_URL)" in http://*|https://*) ;; *) \
+	  echo "OWNVAULT_URL must include the scheme, e.g. https://$(PROD_URL)"; exit 1;; esac
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-	  curl -sf -m 10 -o /dev/null "$(PROD_URL)/" && { echo "smoke ok: $(PROD_URL)"; exit 0; }; sleep 2; \
+	  h=$$(curl -sL -m 10 -o /dev/null -D - -w "status=%{http_code}" "$(PROD_URL)/" 2>/dev/null); \
+	  case "$$h" in *status=200) ;; *) sleep 2; continue;; esac; \
+	  case "$$h" in *"wasm-unsafe-eval"*) echo "smoke ok: $(PROD_URL)"; exit 0;; esac; \
+	  echo "SMOKE FAILED: $(PROD_URL) answered 200 but is not the vault (CSP mismatch) — check the NPM proxy host"; exit 1; \
 	done; echo "SMOKE FAILED: $(PROD_URL)/ not answering"; exit 1
 
 ## smoke-staging: same check against the staging URL
 smoke-staging:
 	@test -n "$(STAG_URL)" || { echo "set OWNVAULT_STAGING_URL in .env to smoke-test"; exit 0; }
+	@case "$(STAG_URL)" in http://*|https://*) ;; *) \
+	  echo "OWNVAULT_STAGING_URL must include the scheme, e.g. https://$(STAG_URL)"; exit 1;; esac
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-	  curl -sf -m 10 -o /dev/null "$(STAG_URL)/" && { echo "smoke ok: $(STAG_URL)"; exit 0; }; sleep 2; \
+	  h=$$(curl -sL -m 10 -o /dev/null -D - -w "status=%{http_code}" "$(STAG_URL)/" 2>/dev/null); \
+	  case "$$h" in *status=200) ;; *) sleep 2; continue;; esac; \
+	  case "$$h" in *"wasm-unsafe-eval"*) echo "smoke ok: $(STAG_URL)"; exit 0;; esac; \
+	  echo "SMOKE FAILED: $(STAG_URL) answered 200 but is not the vault (CSP mismatch) — check the NPM proxy host"; exit 1; \
 	done; echo "SMOKE FAILED: $(STAG_URL)/ not answering"; exit 1
 
 ## logs: follow production logs

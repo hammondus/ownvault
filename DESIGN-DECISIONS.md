@@ -791,7 +791,11 @@ What's different, and why:
 - **No smoke endpoint was added**: `make smoke` GETs `/`, which serves the
   app shell and proves NPM → container → server end to end. A `/api/health`
   would tell an unauthenticated caller the service exists in more detail than
-  a password server needs to volunteer.
+  a password server needs to volunteer. Since the website joined the same box
+  (2026-09), the check also matches `wasm-unsafe-eval` in the CSP: both
+  servers answer `/healthz` with a byte-identical `ok`, and both serve 200 at
+  `/`, so a 200 alone no longer says which one replied. Don't reduce it back
+  to a plain `curl -sf` — that also passes on the 301 from a scheme-less URL.
 
 ## TOTP codes in the vault: one factor, on purpose (2026-08)
 
