@@ -46,8 +46,8 @@ listener and its plain-HTTP redirect, which breaks proxied requests.
 
 ## Nginx Proxy Manager
 
-One NPM instance fronts both the vault server and the website. Four hostnames,
-in the shape this example uses:
+One NPM instance fronts the vault server, the website, and the optional demo.
+Five hostnames, in the shape this example uses:
 
 | Hostname | NPM type | Forwards to | Serves |
 |---|---|---|---|
@@ -55,9 +55,15 @@ in the shape this example uses:
 | `www.ownvault.example` | Redirection Host | `https://ownvault.example` | 301 to the canonical name |
 | `app.ownvault.example` | Proxy Host | `ownvault` : `8080` | the vault |
 | `staging.ownvault.example` | Proxy Host | `ownvault-staging` : `8080` | the staging vault |
+| `demo.ownvault.example` | Proxy Host | `ownvault-demo` : `8080` | the public demo |
 
-Every upstream is plain `http`. Add the staging host only once the staging
-container runs: a proxy host pointing at a stopped container answers 502 to the
+Note which name serves which: **the bare name is the website, and the vault
+lives at `app.`** — `make smoke` fails with a CSP mismatch when `OWNVAULT_URL`
+names the website instead of the vault, which is the usual leftover from
+splitting a single-hostname deployment in two.
+
+Every upstream is plain `http`. Add the staging and demo hosts only once their
+containers run: a proxy host pointing at a stopped container answers 502 to the
 public.
 
 The vault gets its own hostname rather than a path under the website's, because
@@ -80,7 +86,9 @@ zone-level `*.example` certificate covers `ownvault.example` and stops there:
 
 A wildcard does not cover its own bare name either, so request **both
 `*.ownvault.example` and `ownvault.example`** as two names on one certificate.
-That single certificate then covers every host in the table above. A wildcard
+That single certificate then covers every host in the table above, the demo
+included — `demo.ownvault.example` is one label under `ownvault.example`, so
+adding the demo later needs no new certificate. A wildcard
 needs a DNS-01 challenge, so NPM needs credentials for the DNS provider.
 
 Single-name certificates work too, but each host then carries its own issuance
@@ -227,8 +235,9 @@ token required.
 To set it up:
 
 1. Add `OWNVAULT_DEMO_URL=https://demo.<your domain>` to `.env`.
-2. Add a fourth Nginx Proxy Manager host pointing at `ownvault-demo:8080`, the
-   same way the production and staging hosts are configured above.
+2. Add an Nginx Proxy Manager proxy host for `demo.ownvault.example` pointing
+   at `ownvault-demo:8080`, the same way the production and staging hosts are
+   configured above. The existing wildcard certificate already covers it.
 3. Run `make deploy-demo`.
 
 What the demo does differently, all of it driven by the `-demo` flag:
