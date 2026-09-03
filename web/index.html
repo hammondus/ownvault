@@ -146,19 +146,19 @@
            id (multi-device / joining someone's shared server), or start a new
            one. See vaultui.js startGate / handleConnect. -->
       <form id="connect-form" class="lock-form" hidden>
-        <!-- Demo servers only (window.APP_DEMO). vaultui.js showDemoState
-             reveals this and rewrites the lead below it. On a demo, nearly
-             every visitor arrives with no vault anywhere, so creating one is
-             the primary action and joining an existing one is the secondary
-             path — the reverse of a real server, where someone reaching this
-             step usually already has the vault on another device. Without it
-             the create action was the second of three small links under a
-             prominent pair of text boxes. -->
-        <div id="connect-demo-start" hidden>
-          <p class="lock-lead">To look around, create a vault. You choose a
+        <!-- Shown by vaultui.js applyConnectLayout when this device holds no
+             vaults and no setup code arrived in the URL — the cold start. Such
+             a visitor has nothing to connect TO, so creating is the only thing
+             they can do, and it was previously the second of three small links
+             below two prominent text boxes and a Connect button. Someone who
+             reaches this step any other way (a setup link, or "Add another
+             vault") does have a vault to join, and keeps the layout that leads
+             with the fields. -->
+        <div id="connect-start" hidden>
+          <p class="lock-lead">Create a vault to get started. You choose a
             master password; there is no sign-up.</p>
-          <button id="connect-demo-create" class="btn lock-btn" type="button">Create a demo vault</button>
-          <p class="lock-or">or connect a second device</p>
+          <button id="connect-start-create" class="btn lock-btn" type="button">Create a new vault</button>
+          <p class="lock-or">or join an existing vault</p>
         </div>
         <p id="connect-lead" class="lock-lead">Connect this device to an existing vault, or start a
           new one. The setup code (or Vault ID) is shown in Settings on a device

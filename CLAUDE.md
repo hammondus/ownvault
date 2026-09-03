@@ -321,7 +321,11 @@ Supporting flows the above depends on:
 - **Unlock / first run**: the whole app sits behind a lock gate; nothing is
   shown or decrypted until unlocked. On a device with no vaults the gate is a
   **Connect** step (join an existing vault by its Vault ID + token, or start a
-  new one, or restore from a backup file); creating a new vault mints a Vault
+  new one, or restore from a backup file). On a *cold start* — no vaults and no
+  setup code in the URL — `applyConnectLayout()` inverts that step so creating
+  a vault is a primary button and joining is secondary, because such a visitor
+  has nothing to join; a setup link or "Add another vault" keeps the fields
+  leading (DESIGN-DECISIONS.md "The demo server"). creating a new vault mints a Vault
   ID and shows it once on a welcome step. "Start a new vault" probes the server
   first (with the *typed* token, even empty) and refuses if it is unreachable
   or rejects the token — with no offline-only mode there is no fallback to
@@ -547,10 +551,11 @@ safe.
   the retention in days), never from localStorage — a stored flag would ride a
   browser profile into a real vault. The exact date rides the pull response.
   `vaultui.js` `showDemoState` fills the lock gate notice, the app-bar badge,
-  and the Settings card, and calls `demoConnectStep()` — which inverts the
-  connect step (create becomes a primary button, Connect an outline one, the
-  access token disabled and relabelled), because on a demo the visitor has no
-  vault anywhere. See DESIGN-DECISIONS.md "The demo server".
+  and the Settings card, and calls `demoConnectStep()` — which relabels the
+  create button and disables the access token, a demo server being the only one
+  that runs open. The create-first connect layout around it is NOT
+  demo-specific: `applyConnectLayout()` applies it on any cold start. See
+  DESIGN-DECISIONS.md "The demo server".
 
 `make deploy-demo` / `make smoke-demo` / `make logs-demo`. The demo runs
 `OWNVAULT_TAG`, so run `make deploy-demo` after `make promote`. See

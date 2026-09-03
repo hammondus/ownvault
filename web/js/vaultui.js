@@ -292,6 +292,9 @@
     show(byId("restore-msg"), false);
     clearLockInvalid();
     stopScan(); // reaching the gate mid-scan (connect or 2FA) must release the camera
+    // Before showDemoState, whose only business on this step is to relabel the
+    // create button and disable the token field.
+    var connectCreateFirst = applyConnectLayout();
     showDemoState(); // every gate step carries the warning, create and connect most of all
     show(
       byId("connect-scan"),
@@ -369,10 +372,10 @@
     var focusId =
       mode === "create" ? "create-pw"
         : mode === "connect"
-          ? // On a demo the create button is the primary action, so the focus
-            // ring must not sit on the setup-code field and point at the path
-            // almost nobody arrives wanting. It also makes Enter create.
-            window.APP_DEMO ? "connect-demo-create" : "connect-id"
+          ? // On a cold start the create button is the primary action, so the
+            // focus ring must not sit on the setup-code field and point at the
+            // path the visitor cannot use. It also makes Enter create.
+            connectCreateFirst ? "connect-start-create" : "connect-id"
         : welcomeish ? "welcome-continue"
         : "unlock-pw";
     var focus =
@@ -532,14 +535,23 @@
     });
   }
 
+  // Does the URL fragment carry a setup code? Read in two places — startGate,
+  // to route to the connect step, and applyConnectLayout, to decide which half
+  // of that step leads — so it gets one definition. Still readable when
+  // showLock runs: prefillFromHash strips the fragment only afterwards.
+  function setupCodeInHash() {
+    var hash = window.location.hash;
+    return !!(
+      hash && hash.length > 1 && window.Sync && Sync.parseSetupCode(hash.slice(1))
+    );
+  }
+
   function startGate() {
     // A setup link's fragment always routes to connect, even on a device
     // that already has vaults — opening one IS the add-another-vault
     // gesture. (An id the device already holds is caught by handleConnect,
     // which just selects it.)
-    var hash = window.location.hash;
-    var hasCode =
-      hash && hash.length > 1 && window.Sync && !!Sync.parseSetupCode(hash.slice(1));
+    var hasCode = setupCodeInHash();
     if (hasCode || !(window.Sync && Sync.listVaults().length)) {
       // No vaults on this device (or an incoming code): the user supplies an
       // existing Vault ID (connect), starts a new vault, or restores.
@@ -798,23 +810,48 @@
     demoConnectStep();
   }
 
-  // Rebuild the connect step for a demo server. A real server's version leads
-  // with the fields for joining an existing vault, because that is what the
-  // person reaching it almost always wants. On a demo the reverse holds: the
-  // visitor has no vault anywhere, so "Start a new vault instead" — the second
-  // of three small links, under two prominent text boxes and a Connect button
-  // — was the one thing they needed and the hardest thing to find.
-  function demoConnectStep() {
-    show(byId("connect-demo-start"), true);
+  // The connect step serves two people with opposite needs. Someone joining a
+  // vault they already hold elsewhere wants the setup-code fields first, which
+  // is the layout the markup ships. Someone on a cold start — no vaults on this
+  // device, no setup code in the URL — has nothing to join, and for them the
+  // create action sat as the second of three small links under those fields,
+  // which is the one thing they needed and the hardest to find.
+  //
+  // A cold start therefore leads with a create button and demotes the rest. The
+  // condition is deliberately narrow: opening a setup link, or "Add another
+  // vault" from the picker, both mean the person has a vault in hand.
+  function applyConnectLayout() {
+    var createFirst =
+      !(window.Sync && Sync.listVaults().length) && !setupCodeInHash();
 
-    // The fields below the divider now have one purpose, so say which.
+    show(byId("connect-start"), createFirst);
+    // The link would duplicate the button, so only ever one of them is up.
+    show(byId("connect-create"), !createFirst);
+
     var lead = byId("connect-lead");
     if (lead) {
-      lead.textContent =
-        "Its setup code is in Settings, on the device that already has the vault.";
+      lead.textContent = createFirst
+        ? // The fields now sit under a divider that says what they are for, so
+          // this only has to say where the code comes from.
+          "Its setup code is in Settings, on the device that already has the vault."
+        : "Connect this device to an existing vault, or start a new one. The setup " +
+          "code (or Vault ID) is shown in Settings on a device that already has the vault.";
     }
 
-    // A demo server runs open, so the token is not merely optional here, it is
+    // Connect stops being the loudest control when it is no longer the likely
+    // one. toggle rather than add: the same gate is reused for "Add another
+    // vault" later in the session, where Connect is primary again.
+    var submit = byId("connect-submit");
+    if (submit) submit.classList.toggle("lock-btn-secondary", createFirst);
+
+    return createFirst;
+  }
+
+  // The two things about the connect step that are true of a demo server and
+  // of nothing else. The create-first layout around them is not demo-specific
+  // — see applyConnectLayout.
+  function demoConnectStep() {
+    // A demo runs open, so the token is not merely optional here, it is
     // meaningless. Disabled and relabelled rather than removed: someone told to
     // expect a token should see that it has been dealt with, not wonder where
     // it went.
@@ -824,13 +861,9 @@
       token.value = "";
       token.placeholder = "Access token (not needed for demo)";
     }
-
-    // The link is now the button above it.
-    show(byId("connect-create"), false);
-
-    // Connect stops being the loudest control on the step.
-    var submit = byId("connect-submit");
-    if (submit) submit.classList.add("lock-btn-secondary");
+    // Naming it a demo vault on the button reinforces that it is disposable.
+    var create = byId("connect-start-create");
+    if (create) create.textContent = "Create a demo vault";
   }
 
   // The vault name is both the installed-app name (App, in app.js — local +
@@ -1938,7 +1971,7 @@
   byId("unlock-form").addEventListener("submit", handleUnlock);
   byId("connect-form").addEventListener("submit", handleConnect);
   byId("connect-create").addEventListener("click", handleConnectCreate);
-  byId("connect-demo-create").addEventListener("click", handleConnectCreate);
+  byId("connect-start-create").addEventListener("click", handleConnectCreate);
   byId("connect-scan").addEventListener("click", startConnectScan);
   byId("scan-cancel").addEventListener("click", stopScan);
   byId("create-restore").addEventListener("click", openRestore);

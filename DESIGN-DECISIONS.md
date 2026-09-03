@@ -1275,20 +1275,36 @@ the lock gate (read before anything is entered), a badge on the app bar (the
 standing reminder), and a Settings card next to the export that rescues the
 data.
 
-**The connect step inverts on a demo.** A real server's version leads with the
-fields for joining an existing vault, because someone reaching that step
-normally has the vault on another device already; "Start a new vault instead"
-is rightly a small link. On a demo the reverse holds — the visitor has no vault
-anywhere — and the same layout buried the only thing they needed as the second
-of three small links, under two prominent text boxes and a Connect button.
-`demoConnectStep()` therefore puts a "Create a demo vault" button above a
+**The connect step inverts on a cold start.** It serves two people with
+opposite needs. Someone joining a vault they already hold on another device
+wants the setup-code fields first, which is the layout the markup ships and
+what a returning user gets. Someone arriving cold — no vaults on this device,
+no setup code in the URL — has nothing to join, and for them the create action
+sat as the second of three small links under two prominent text boxes and a
+Connect button: the one thing they needed, and the hardest to find.
+
+`applyConnectLayout()` therefore puts a "Create a new vault" button above a
 divider, demotes Connect to an outline button, rewrites the lead so the fields
 below have a stated purpose, hides the now-duplicated link, and moves the
-initial focus to the button so Enter creates. The token field is **disabled and
-relabelled** rather than removed: a demo server runs open, so the field is not
-merely optional but meaningless, and someone told to expect a token should see
-that it has been dealt with instead of wondering where it went. All of it is
-gated on `window.APP_DEMO`, so a real server's gate is untouched.
+initial focus to the button so Enter creates.
+
+The condition is deliberately narrow — no vaults **and** no setup code —
+because the other two ways to reach this step both mean the person has a vault
+in hand: opening a setup link (which prefills the field), and "Add another
+vault" from the picker. `setupCodeInHash()` is shared with `startGate` so
+"a code is present" has one definition; it stays readable inside `showLock`
+because `prefillFromHash` strips the fragment only afterwards.
+
+This started as a demo-only fix and was generalised: someone who has just
+installed their own server is in exactly the same position as a demo visitor,
+and having read a README does not make a buried link easier to see.
+
+Two things stay genuinely demo-specific (`demoConnectStep()`): the button reads
+"Create a demo vault", and the **access token is disabled and relabelled**. A
+demo runs open, so the field is not merely optional but meaningless — while a
+self-hosted server may well require one, so it stays live there. Disabled
+rather than removed: someone told to expect a token should see that it has
+been dealt with instead of wondering where it went.
 
 **`ipQuota` duplicates the website's contact-form limiter.** `site/` is a
 separate Go module, on purpose, so the vault server never depends on
