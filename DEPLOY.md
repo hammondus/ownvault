@@ -6,6 +6,11 @@ image — production and an opt-in staging copy — following the primed
 deploy pattern: staging proves an image, `promote` points production at that
 exact image, `rollback` is a container swap.
 
+The website is a separate module with its own container, its own compose file,
+and its own runbook in `site/README.md`. It shares the box, the same Docker
+network, and this NPM instance, so its proxy hosts are documented here
+alongside the vault's.
+
 ## First-time setup (on the deploy host)
 
 1. Clone the repo and copy the config:
@@ -24,14 +29,8 @@ exact image, `rollback` is a container swap.
    this host uses a different network name, change it in
    `docker-compose.yaml`.
 
-4. In NPM, add two proxy hosts, both plain `http` upstreams:
-   - production hostname → `ownvault:8080`
-   - staging hostname → `ownvault-staging:8080`
-
-   Enable **HSTS** on both: the app only sends it from its own (unused here)
-   TLS listener, so behind NPM nobody sends it unless NPM does. Websockets
-   support is not needed — sync notifications are SSE, and the server sets
-   `X-Accel-Buffering: no` so nginx streams them unbuffered.
+4. In NPM, add the proxy hosts. For the hostnames, the upstreams, and the
+   per-host settings, see [Nginx Proxy Manager](#nginx-proxy-manager).
 
 5. First deploy: `make deploy`, straight to production. Not staging-first:
    Compose interpolates every service on any command, so production's
@@ -44,6 +43,110 @@ The PWA needs HTTPS at the browser edge for install and the service worker;
 NPM's certificate satisfies that. The container must never contain `certs/`
 (`.dockerignore` enforces it) — their presence would start the internal TLS
 listener and its plain-HTTP redirect, which breaks proxied requests.
+
+## Nginx Proxy Manager
+
+One NPM instance fronts both the vault server and the website. Four hostnames,
+in the shape this example uses:
+
+| Hostname | NPM type | Forwards to | Serves |
+|---|---|---|---|
+| `ownvault.example` | Proxy Host | `ovsite` : `8090` | the website |
+| `www.ownvault.example` | Redirection Host | `https://ownvault.example` | 301 to the canonical name |
+| `app.ownvault.example` | Proxy Host | `ownvault` : `8080` | the vault |
+| `staging.ownvault.example` | Proxy Host | `ownvault-staging` : `8080` | the staging vault |
+
+Every upstream is plain `http`. Add the staging host only once the staging
+container runs: a proxy host pointing at a stopped container answers 502 to the
+public.
+
+The vault gets its own hostname rather than a path under the website's, because
+a browser origin is the scheme, host, and port — a path is not part of it. On
+one hostname, the website could read the vault's IndexedDB and sync token. For
+the rest of that reasoning, see DESIGN-DECISIONS.md "The vault and the website
+are separate origins".
+
+### The vault hosts
+
+`app.` and `staging.` take the same settings.
+
+- **Force SSL** on, **HTTP/2** on.
+- **HSTS off.** The server sends `Strict-Transport-Security` itself whenever a
+  proxy reports that it terminated TLS (`hstsWhenProxied` in `main.go`, keyed
+  on the `X-Forwarded-Proto: https` that NPM sets). Enabling NPM's as well
+  sends the header twice and hides which layer owns the policy.
+- **Websockets off.** Sync notifications are SSE, not websockets. The server
+  sets `X-Accel-Buffering: no` so nginx streams them unbuffered, and the 25 s
+  keepalive sits inside nginx's 60 s `proxy_read_timeout`.
+- **Block Common Exploits off.** It matches request shapes this server does not
+  have, and a false positive on an `/api/*` call reaches the client as a sync
+  failure carrying no usable message.
+- In the **Advanced** tab, set `client_max_body_size 10m;`. `maxPushBytes` is
+  8 MiB, sized for a full-vault restore push, and stock nginx caps request
+  bodies at 1 MiB. An nginx 413 surfaces in the client as an unexplained sync
+  error, so set the limit rather than depending on NPM's default.
+
+### The website hosts
+
+- **Force SSL** on, **HTTP/2** on, **HSTS on.** The site sends no HSTS of its
+  own, so NPM is the only source.
+- **HSTS Subdomains** is safe to enable. It covers `www.` and `app.`, both of
+  which are HTTPS-only. It does not reach a sibling such as
+  `ownvault-staging.example`.
+- Leave **HSTS Preload** off. Preload is a submission to a list compiled into
+  browser binaries, and removal takes months.
+- Add no header rules in the **Advanced** tab. The site sets `script-src
+  'none'` itself, and an `add_header` in a nested nginx block discards the
+  inherited headers instead of adding to them.
+
+Use a Redirection Host for `www.`, not a second proxy host to the same
+container. Two hostnames serving one site split the origin, so link shares,
+caches, and the canonical and `og:` tags disagree with each other. Set
+`OVSITE_URL` in `site/.env` to the name you keep.
+
+### Verifying
+
+```sh
+curl -sI https://ownvault.example | grep -i 'strict-transport\|content-security'
+curl -sI https://app.ownvault.example | grep -ci 'strict-transport'  # want 1
+curl -sI https://www.ownvault.example | head -3                      # want 301
+curl -sN https://app.ownvault.example/events | head -3               # want a stream
+```
+
+If the vault sends no HSTS header, NPM is not passing `X-Forwarded-Proto` and
+`hstsWhenProxied` never fires. Check the proxy host, not the Go code.
+
+## Changing the vault's hostname
+
+A vault client keeps everything in the browser origin: IndexedDB, the sync
+token, the service worker, and the PWA install. Changing the hostname is
+therefore a new origin, and every device reconnects. Server data survives
+untouched — entries are keyed by Vault ID, not by hostname — so a reconnected
+device pulls its entries back down and keeps its Vault ID. Pick a hostname you
+can live with, because the next change costs the same again.
+
+Serve both names at once rather than swapping in one step:
+
+1. Add an NPM proxy host for the new name, pointing at the same container. The
+   vault now answers on both names, backed by one database.
+2. On each device, export a backup from Settings. You should not need it. The
+   reconnect is the step worth having a fallback for.
+3. On each device, open the new name and connect with the setup code. Confirm
+   your entries arrived before you go on.
+4. Repoint or delete the old proxy host.
+5. Unregister the old name's service worker in each browser
+   (`chrome://serviceworker-internals`). Its scope is `/`, and its navigation
+   fallback is the cached vault shell, so until it goes it can answer
+   navigations to whatever serves that hostname next. A browser discards the
+   registration by itself once `/sw.js` returns 404, but only on the update
+   check, so the first navigation can still come from the old worker. Check
+   rather than trust it.
+6. Delete the old PWA installs and add them again from the new name. On iOS,
+   delete the Home Screen icon first: the installed app has its own storage.
+7. Update `OWNVAULT_URL` in `.env` so `make smoke` probes the new name.
+
+The extension stores its server URL separately (`serverUrl` in `sync.js`) and
+is single-vault, so repoint and reconnect it too.
 
 ## Day to day
 

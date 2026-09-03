@@ -4,6 +4,51 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## The vault and the website are separate origins (2026-09)
+
+Before anyone used it for real, one hostname served the vault at `/`. The
+website needed a home, and the obvious move was the website at `/` with the
+vault relegated to `/vault` on the same hostname. It went to its own hostname
+instead: website at `ownvault.<zone>`, vault at `app.ownvault.<zone>`.
+
+**A path is not an origin.** An origin is the scheme, host, and port, so
+`host/` and `host/vault` share one IndexedDB, one localStorage, one cookie jar,
+and one service worker registry. The website would have had read and write
+access to `ownvault-<vaultId>` and to `syncToken:<id>`. Today that is safe —
+the site runs `script-src 'none'` and has no JavaScript at all — but that is a
+policy held in place by review, not a wall the browser enforces. One future
+script tag or one templating slip in the contact form would put a stored XSS
+inside the vault's origin. Everything else here is built so that a guarantee
+holds structurally rather than by good behaviour; this is the same call.
+
+**The path split was also not a config change.** Five files assume the app owns
+the origin root: the absolute asset paths and `hx-get`/`hx-push-url` pairs in
+`web/index.html`; the `PRECACHE` list, the `"/"` navigation cache key and
+fallback, and the `/api/` and `/events` bypasses in `web/sw.js`; `linkForPath`,
+the manifest `scope`/`start_url`/`id`/icons, `EventSource("/events")`, and the
+`/sw.js?v=` registration in `app.js`; every `api()` path and `makeSetupCode`'s
+origin in `sync.js`; and the `jsqr.min.js` load plus `location.replace("/")` in
+`vaultui.js`. An nginx rewrite cannot absorb that, because the browser would
+request `/vault/js/app.js` while the app emits `/js/app.js`. The client has to
+know its own base path, which means a `-basepath` flag threaded through all of
+the above, a base-path field added to the setup code and its QR, and a routing
+rule that exists only in NPM's database rather than in this repo.
+
+Cost of the hostname split, by comparison: one DNS record, one proxy host, one
+certificate, and no code change.
+
+**What it cost the existing devices.** A hostname is an origin, so both devices
+reconnected. Server data did not move — entries are keyed by Vault ID, not by
+hostname — so each device kept its Vault ID and pulled its entries back down.
+DEPLOY.md "Changing the vault's hostname" documents the dual-serve procedure
+and the stale service worker on the old name, which is the trap: its scope is
+`/`, and its navigation fallback is the cached vault shell, so it can answer
+navigations to the website that replaced it.
+
+`www.` is a Redirection Host, not a second proxy host to the same container.
+Two hostnames serving one site split the origin, and the canonical tag, the
+`og:` tags, and any shared link then disagree about which one is real.
+
 ## Touch tap targets keyed on `pointer: coarse`, not iOS (2026-09)
 
 The record modal's close button was fine with a mouse and too small with a
@@ -731,8 +776,10 @@ What's different, and why:
   listener (plus a plain-HTTP→HTTPS redirect) whenever `certs/` exists, which
   is a LAN-dev convenience; behind NPM it would break every proxied request.
   `.dockerignore` excludes `certs/`, making the container structurally unable
-  to enter that mode — no `-plainhttp` flag needed. HSTS is enabled in NPM,
-  since the app only sends it from its own TLS listener.
+  to enter that mode — no `-plainhttp` flag needed. HSTS was enabled in NPM
+  at the time, since the app only sent it from its own TLS listener;
+  `hstsWhenProxied` later moved that back into the app, so NPM's HSTS is now
+  off for the vault hosts and on for the website's.
 - **SSE through nginx**: `/events` sets `X-Accel-Buffering: no` so nginx
   streams events instead of buffering them (buffered SSE = laggy sync and a
   lying reachability indicator). The 25 s keepalive already sits under

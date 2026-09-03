@@ -87,7 +87,11 @@ make logs
 ```
 
 Nginx Proxy Manager terminates TLS and proxies to `ovsite:8090` on the shared
-`blobbyboo` network. The compose file publishes no ports.
+`blobbyboo` network. The compose file publishes no ports. For the proxy host
+settings, and for the `www.` redirect that keeps one canonical origin, see
+"Nginx Proxy Manager" in the vault server's DEPLOY.md — one NPM instance fronts
+both. Set `OVSITE_URL` to the canonical name, since it fills the canonical and
+`og:` tags and is what `make smoke` probes.
 
 `make deploy-built` skips the pull, for testing a branch or a fix edited on the
 box.
