@@ -6,10 +6,16 @@
  * Offline, everything is served from the cache, including navigations
  * (any app route falls back to the cached shell).
  *
- * Bump VERSION to force old caches to be discarded on the next visit.
+ * The cache name carries the app version, which app.js passes in the
+ * registration URL (/sw.js?v=1.2.3) from window.APP_VERSION. So a release
+ * changes this script's URL — which is what makes the browser treat it as a
+ * new worker — and names a fresh cache in one step. There is deliberately no
+ * hand-maintained version constant here: one number to bump, in /VERSION.
  */
 
-var VERSION = "ownvault-v37";
+var VERSION =
+  "ownvault-" +
+  (new URL(self.location.href).searchParams.get("v") || "dev");
 
 // How long to wait for the server before falling back to cache. An
 // unreachable host (machine asleep / other network) doesn't refuse the
@@ -37,6 +43,7 @@ function fetchWithTimeout(request) {
 var PRECACHE = [
   "/",
   "/css/style.css",
+  "/js/version.js",
   "/js/app.js",
   "/js/pwstrength.js",
   "/js/vault.js",

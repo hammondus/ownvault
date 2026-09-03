@@ -494,6 +494,16 @@
   function fillDiagnostics() {
     var net = document.getElementById("net-status");
     var sw = document.getElementById("sw-status");
+    var ver = document.getElementById("app-version");
+    var latest = document.getElementById("latest-version");
+    var latestRow = document.getElementById("latest-version-row");
+    if (ver) ver.textContent = runningVersion || "unknown";
+    if (latestRow) {
+      // Only worth a line when there is something to say: an unreachable
+      // server, or one running the same build, has no news.
+      latestRow.hidden = !updateAvailable();
+      if (latest) latest.textContent = serverVersion;
+    }
     if (net) {
       net.textContent =
         netOnline === false
@@ -519,6 +529,69 @@
   }
 
   document.body.addEventListener("htmx:afterSwap", fillDiagnostics);
+
+  /* ==================== Version / update banner ==================== */
+  // window.APP_VERSION is served by the Go server from the embedded VERSION
+  // file (see /js/version.js), so it is the build this page is running.
+  // serverVersion arrives over SSE. They differ exactly when the server has
+  // been redeployed under a client that is still running the old code.
+
+  var runningVersion = window.APP_VERSION || "";
+  var serverVersion = "";
+  var updateDismissed = false;
+
+  function updateAvailable() {
+    return !!serverVersion && !!runningVersion && serverVersion !== runningVersion;
+  }
+
+  function refreshUpdateBanner() {
+    var banner = document.getElementById("update-banner");
+    if (!banner) return;
+    var showIt = updateAvailable() && !updateDismissed;
+    if (showIt) {
+      document.getElementById("update-text").textContent =
+        "Version " + serverVersion + " is available.";
+    }
+    banner.hidden = !showIt;
+    document.body.classList.toggle("has-update", showIt);
+    // Measure after the show, so the content offset matches a banner whose
+    // text has wrapped. Cleared on hide so a stale height can't linger.
+    document.body.style.setProperty(
+      "--update-h",
+      showIt ? Math.ceil(banner.getBoundingClientRect().height) + "px" : ""
+    );
+  }
+
+  // A rotation or window resize can rewrap the banner text.
+  window.addEventListener("resize", function () {
+    if (updateAvailable() && !updateDismissed) refreshUpdateBanner();
+  });
+
+  // Called from the SSE "version" listener. A deploy restarts the server, which
+  // drops every stream; the reconnect is what delivers the new value.
+  function setServerVersion(v) {
+    v = String(v || "");
+    if (v === serverVersion) return;
+    serverVersion = v;
+    // A new *different* version is news even if an earlier banner was
+    // dismissed — the user dismissed that one, not this one.
+    updateDismissed = false;
+    refreshUpdateBanner();
+    fillDiagnostics();
+  }
+
+  document.addEventListener("click", function (e) {
+    if (e.target.closest("#update-reload")) {
+      // Reloading re-locks the vault (the key lives only in memory), which is
+      // why this is never automatic.
+      location.reload();
+      return;
+    }
+    if (e.target.closest("#update-dismiss")) {
+      updateDismissed = true;
+      refreshUpdateBanner();
+    }
+  });
 
   /* ==================== Reachability ==================== */
   // True reachability (not just "have a network"), driven by three signals
@@ -558,6 +631,13 @@
     es.addEventListener("ping", function () {
       lastPing = Date.now();
       setNetworkState(true);
+    });
+    // Sent once per connection. After a deploy every stream drops and
+    // reconnects, so this is how a running client hears about a new build.
+    es.addEventListener("version", function (ev) {
+      try {
+        setServerVersion(JSON.parse(ev.data).version);
+      } catch (err) { /* malformed frame — keep the old value */ }
     });
     es.onerror = function () {
       // Fires on every failed auto-reconnect attempt too; dedup'd above.
@@ -609,7 +689,13 @@
   /* ==================== Service worker ==================== */
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/sw.js");
+    // The version rides in the URL: it changes the script the browser compares
+    // against the installed worker (so a release is detected) and gives sw.js
+    // its cache name in the same step. Without a version — version.js failed
+    // to load — fall back to the bare URL rather than registering nothing.
+    navigator.serviceWorker.register(
+      runningVersion ? "/sw.js?v=" + encodeURIComponent(runningVersion) : "/sw.js"
+    );
   }
 
   /* ==================== exports ==================== */

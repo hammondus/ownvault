@@ -466,6 +466,42 @@ Rules to keep when touching it:
   anything carrying `?v=` is served `immutable`. Hashes come from the embedded
   files in production and are re-read on change in `-dev`.
 
+# Versioning and updates
+
+The version lives in **one place**: the `VERSION` file at the repository root,
+a bare semver line. Nothing else stores a version, so nothing can drift.
+
+- `main.go` embeds it (`//go:embed VERSION`) as `appVersion`.
+- `GET /js/version.js` is a handler, not a file: it emits
+  `window.APP_VERSION = "x.y.z";` from that same string, `no-cache`. A served
+  script rather than an inline one because the CSP forbids inline scripts.
+- `app.js` registers the service worker as `/sw.js?v=<version>`. That URL
+  change is what makes the browser see a new worker, and `sw.js` reads `v`
+  from its own URL for the cache name — so a release invalidates the cache
+  with no second number to bump. `web/sw.js` has **no** `VERSION` constant any
+  more; do not reintroduce one.
+
+**Update delivery is push, not polling.** `/events` sends
+`event: version` on every connection. A deploy restarts the server, which
+drops every stream; each client's automatic reconnect delivers the new
+version. `app.js` compares it with `window.APP_VERSION` and reveals
+`#update-banner`. The banner is **never** an automatic reload: the vault key
+lives only in memory, so reloading re-locks the vault and discards an
+in-progress edit. About shows the running version always, and the available
+one only when they differ.
+
+**Bumping.** `make version-patch` / `version-minor` / `version-major`.
+
+- **Patch is automatic**: every commit that changes shipped code (anything
+  under `web/`, `main.go`, or `extension/`) bumps at least the patch field as
+  part of that commit. Do it without being asked. Doc-only commits do not.
+- **Minor and major are manual** — a deliberate call by Craig or by Claude
+  proposing it. Minor for a new user-visible capability, major for a break
+  users must be told about.
+- The app is **pre-1.0** (`0.1.0`). Craig is its only user, so semver's
+  pre-1.0 convention applies: a minor bump may carry a breaking change. 1.0.0
+  is a release he will call, not somewhere to drift one patch at a time.
+
 # Public Use
 As the server is zero trust, if you want public sync on your devices, you can
 set up your own, or, with their permission, use someone elses.

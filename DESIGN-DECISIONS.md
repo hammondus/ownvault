@@ -4,6 +4,58 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Version push over SSE, one VERSION file, banner not auto-reload (2026-09)
+
+A running client had no way to learn the server had been redeployed. The only
+trigger was a full page load, and the app never does one — htmx swaps
+fragments, and `sw.js` bypasses `/api/*` and `/events`. So a tab, or a resident
+Home Screen app, ran old code indefinitely.
+
+**Push rather than polling.** `/events` sends `event: version` on every
+connection. A deploy restarts the server, which drops every open stream, and
+each client's automatic reconnect delivers the new version. So the notification
+costs one extra line per connection and no timer anywhere — a `registration.update()`
+poll or a `/api/version` endpoint would both have been requests asking a
+question the reconnect already answers.
+
+**One VERSION file.** `sw.js` used to carry a hand-bumped
+`ownvault-vNN` cache key, which is the kind of constant that gets forgotten.
+Now `app.js` registers `/sw.js?v=<version>` and the worker reads `v` from its
+own URL. One value does three jobs: it changes the worker's script URL (which
+is how the browser detects a new worker at all), it names the cache, and it is
+what the client compares against the server. Verified end to end: after a
+`make version-patch` and a restart, the cache rolled one version to the next
+with the old one deleted.
+
+The browser gets the string from `GET /js/version.js`, a handler that writes
+`window.APP_VERSION` from the embedded file. A checked-in `web/js/version.js`
+would be a second copy to keep in step, and an inline `<script>` in the shell
+is not an option under `script-src 'self'`.
+
+**A banner, never an automatic reload.** The vault key is a non-extractable
+CryptoKey held only in memory, so a reload re-locks the vault and throws away
+whatever the user was typing. Silently reloading someone mid-edit to install a
+patch would be a worse bug than the staleness it fixes. The banner is
+dismissible, and a *different* new version un-dismisses it — the user declined
+that version, not all future ones.
+
+The content offset under the banner comes from JS measuring the rendered
+element (`--update-h`, set through the CSSOM, which the CSP permits where a
+style attribute would not). A hardcoded offset is wrong the moment the text
+wraps to two lines on a narrow phone.
+
+**Patch bumps are automatic, minor and major are not.** Every commit touching
+shipped code bumps at least the patch field; a new capability or a break is a
+judgement call that belongs to a person. The Make targets rewrite `VERSION`
+with awk rather than `sed -i`, whose in-place flag differs between macOS and
+Linux — the same reason the `.env` helper in that Makefile uses awk.
+
+Starting at **0.1.0**. The server is deployed, but Craig is its only user and
+there is no one else to break, so the pre-1.0 range is the honest one. 1.0.0 is
+a deliberate release he will make once the app has had more work — not
+something to drift into one patch at a time. Until then, semver's pre-1.0
+convention applies: a minor bump may carry a breaking change.
+
 ## Install prompt after connecting, and the iOS storage split (2026-09)
 
 Creating a vault offered the install; *connecting* a device to an existing one

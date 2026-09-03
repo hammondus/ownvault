@@ -22,9 +22,42 @@ define set_env_var
 	@awk -v k='$(1)' -v v='$(2)' -F= '$$1==k{next} {print} END{print k"="v}' .env > .env.new && mv .env.new .env
 endef
 
-.PHONY: build test run release clean extension \
+.PHONY: build test run release clean extension version \
+        version-patch version-minor version-major \
         docker-build deploy deploy-built deploy-staging deploy-staging-built \
         promote rollback images smoke smoke-staging logs logs-staging
+
+# Bump one field of the semver in ./VERSION. That file is the only place a
+# version lives: the Go binary embeds it, /js/version.js hands it to the
+# browser, and the service worker keys its cache on it. awk rather than
+# `sed -i`, whose in-place flag differs between macOS and Linux.
+define bump_version
+	@test -f VERSION || echo 0.0.0 > VERSION
+	@awk -F. -v part='$(1)' '{ \
+		major=$$1; minor=$$2; patch=$$3; \
+		if (part=="major") { major++; minor=0; patch=0 } \
+		else if (part=="minor") { minor++; patch=0 } \
+		else { patch++ } \
+		printf "%d.%d.%d\n", major, minor, patch \
+	}' VERSION > VERSION.new && mv VERSION.new VERSION
+	@echo "VERSION -> $$(cat VERSION)"
+endef
+
+## version: print the current version
+version:
+	@cat VERSION
+
+## version-patch: bump the patch field (every shipped change gets at least this)
+version-patch:
+	$(call bump_version,patch)
+
+## version-minor: bump the minor field — new user-visible capability
+version-minor:
+	$(call bump_version,minor)
+
+## version-major: bump the major field — a break users must be told about
+version-major:
+	$(call bump_version,major)
 
 ## build: compile the server binary for this machine (web/ embedded)
 build:

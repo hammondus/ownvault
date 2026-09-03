@@ -18,6 +18,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -29,6 +30,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -103,6 +105,34 @@ const minTokenLen = 16
 
 //go:embed all:web
 var embedded embed.FS
+
+// The one place the app's version lives. `make version-patch` (or -minor /
+// -major) rewrites this file; the Go binary embeds it, /js/version.js hands
+// the same string to the browser, and the service worker keys its cache on it.
+// Nothing else stores a version, so nothing can drift out of step.
+//
+//go:embed VERSION
+var versionRaw string
+
+// cmp.Or covers a VERSION file that is empty or whitespace: the app still
+// runs, and an obviously wrong version is easier to diagnose than a blank one.
+var appVersion = cmp.Or(strings.TrimSpace(versionRaw), "0.0.0-unknown")
+
+// The SSE frame announcing this build, built once at startup. A deploy
+// restarts the server, which drops every open stream; each client's automatic
+// reconnect then delivers this. That is the whole push mechanism — no polling,
+// and no version endpoint for a client to hammer.
+var versionEvent = buildVersionEvent()
+
+func buildVersionEvent() string {
+	b, err := json.Marshal(map[string]string{"version": appVersion})
+	if err != nil {
+		// Unreachable for a map[string]string, but a silent empty frame here
+		// would be a confusing way to find that out.
+		log.Fatalf("encoding version event: %v", err)
+	}
+	return "event: version\ndata: " + string(b) + "\n\n"
+}
 
 /* ==================== SSE broadcast hub ==================== */
 
@@ -359,6 +389,18 @@ func main() {
 	// process is serving, which anyone who can reach the port already knows.
 	mux.HandleFunc("GET /healthz", nitrokit.Healthz)
 
+	// The running build, as a script rather than an inline <script> or a
+	// templated shell: the CSP forbids inline scripts, and generating this
+	// from the embedded VERSION keeps it impossible for a checked-in copy to
+	// go stale. no-cache so a client that reloads always learns the truth —
+	// the service worker's cache key is derived from this value, so a stale
+	// one would pin the whole app to an old cache.
+	mux.HandleFunc("GET /js/version.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		nitrokit.NoCache(w)
+		fmt.Fprintf(w, "window.APP_VERSION = %q;\n", appVersion)
+	})
+
 	// Server-sent events: keepalive pings plus "changed" notifications when
 	// another device writes. Deliberately unauthenticated even when a token is
 	// set: it carries only pings and a bare "changed at rev N" (no ciphertext),
@@ -400,6 +442,10 @@ func main() {
 		}
 
 		fmt.Fprintf(w, "retry: 3000\n\nevent: ping\ndata: {}\n\n")
+		// Sent to every subscriber, vault-scoped or not: which build is
+		// serving is a property of the server, not of a vault. The client
+		// compares it with its own window.APP_VERSION and offers a reload.
+		io.WriteString(w, versionEvent)
 		if err := rc.Flush(); err != nil {
 			return
 		}
