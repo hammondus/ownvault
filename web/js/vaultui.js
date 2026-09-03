@@ -866,6 +866,7 @@
     hideSetupQR(); // the QR shows the token; don't leave it behind the gate
     var list = byId("pw-list");
     if (list) list.innerHTML = "";
+    setEntryCount(0, 0); // how many entries a vault holds is not for the lock screen
     showConflictBanner(0);
     clearTimeout(idleTimer);
     showLock("unlock");
@@ -937,6 +938,26 @@
     });
   }
 
+  // The bar's entry count. Self-describing rather than a bare number, because
+  // "3 of 12" beside an app name means nothing on its own — to a screen reader
+  // least of all. Hidden on an empty vault: the empty-state message below
+  // already says there is nothing here, and "0 records" only repeats it.
+  function setEntryCount(total, shownCount) {
+    var el = byId("entry-count");
+    if (!el) return;
+    if (!total) {
+      el.textContent = "";
+      show(el, false);
+      return;
+    }
+    var noun = total === 1 ? " record" : " records";
+    el.textContent =
+      shownCount === total
+        ? total + noun
+        : shownCount + " of " + total + noun;
+    show(el, true);
+  }
+
   function matches(entry, term) {
     if (!term) return true;
     // Per spec: search spans every field, including password and notes, even
@@ -958,12 +979,18 @@
   function renderList() {
     var list = byId("pw-list");
     var empty = byId("pw-empty");
-    if (!list) return;
-    list.innerHTML = "";
 
     var shown = entries.filter(function (e) {
       return matches(e, searchTerm);
     });
+
+    // Before the early return below: the count lives in the persistent app
+    // bar, not in the swapped-in Passwords fragment. Unlocking while Settings
+    // is the current screen still has to fill it.
+    setEntryCount(entries.length, shown.length);
+
+    if (!list) return;
+    list.innerHTML = "";
 
     if (!entries.length) {
       empty.textContent = "No passwords yet. Tap + to add one.";

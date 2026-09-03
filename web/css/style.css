@@ -76,6 +76,22 @@ body {
   letter-spacing: -0.01em;
 }
 
+/* Entry count, right-aligned in the otherwise empty half of the bar. Quiet on
+   purpose: it is a status readout, not a control, and must not compete with
+   the app name beside it. */
+.entry-count[hidden] {
+  display: none;
+}
+
+.entry-count {
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums; /* the number changes as you type */
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
 /* ---------- Screens ---------- */
 
 main {
@@ -352,6 +368,9 @@ body.offline .toast {
 }
 
 .update-btn {
+  /* .btn carries margin-top: 14px for stacked forms, which in a centred flex
+     row pushes the button below the text it sits beside. */
+  margin-top: 0;
   /* .btn is accent blue, which fights the gold. Navy matches the banner's own
      text and the app bar. */
   padding: 4px 14px;

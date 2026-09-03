@@ -35,6 +35,10 @@
   <!-- Fixed top bar: stays in place while the screen content scrolls -->
   <header class="app-header">
     <h1>Own Vault</h1>
+    <!-- How many entries the vault holds, and how many the current search
+         matches. Filled by vaultui.js renderList and cleared on lock — the
+         gate covers the bar, but a count must never survive a lock. -->
+    <span id="entry-count" class="entry-count" hidden></span>
   </header>
 
   <!-- Overlay shown behind the nav when it is open -->

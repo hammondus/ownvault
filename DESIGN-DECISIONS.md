@@ -4,6 +4,26 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Touch tap targets keyed on `pointer: coarse`, not iOS (2026-09)
+
+The record modal's close button was fine with a mouse and too small with a
+thumb. The request was "bigger on iOS only"; the implementation keys on
+`@media (pointer: coarse)` instead, because iOS is not the actual condition —
+a fingertip against a ~24px target is. The media query reports the *primary*
+pointer, so a desktop keeps the compact button, an iPad driven by a trackpad
+reports `fine` and correctly keeps it too, and any other touch device gets the
+larger target without a UA string being consulted. `isIOS()` exists in
+vaultui.js and was deliberately not used: it would have been narrower than the
+problem and wrong on hardware nobody here has tested.
+
+The button grows to 44px (Apple's minimum tap target) via `min-width`/
+`min-height` plus negative margins, so the hit area expands outward into the
+modal card's 20px padding rather than pushing the header taller. Measured:
+24x24 -> 44x44 with `.modal-head` unchanged at 24px.
+
+The same reasoning would apply to the copy and reveal icons in that modal,
+which share `.icon-btn` and the same ~24px size. Left alone for now.
+
 ## Version push over SSE, one VERSION file, banner not auto-reload (2026-09)
 
 A running client had no way to learn the server had been redeployed. The only
