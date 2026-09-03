@@ -165,8 +165,23 @@ deploy-built:
 # No build and no tag of its own: the demo runs whatever OWNVAULT_TAG names, so
 # it always shows the build production is serving. `make promote` does not
 # recreate it, so run this after promoting to bring the demo along.
+#
+# That coupling has a bootstrap consequence: until a build carrying -demo has
+# been promoted, production's image does not know the flag and the container
+# exits at startup with "flag provided but not defined: -demo". Compose reports
+# that as a started service and `smoke-demo` as "not answering", neither of
+# which names the cause — so prove the image supports the flag BEFORE starting
+# anything. `-h` lists the flags a binary has, which is a positive check: if
+# the probe itself breaks, it refuses to deploy rather than passing quietly.
 deploy-demo:
 	@grep -q '^OWNVAULT_TAG=..*' .env 2>/dev/null || { echo "no OWNVAULT_TAG in .env — deploy production first (see DEPLOY.md)"; exit 1; }
+	@tag=$$(grep -m1 '^OWNVAULT_TAG=' .env | cut -d= -f2-); \
+	docker image inspect ownvault:$$tag >/dev/null 2>&1 || { echo "image ownvault:$$tag is gone — rebuild with 'make deploy-staging'"; exit 1; }; \
+	docker run --rm ownvault:$$tag -h 2>&1 | grep -q '^  -demo$$' || { \
+	  echo "ownvault:$$tag predates the -demo flag, so the demo would exit at startup."; \
+	  echo "The demo runs production's image, so promote a build that has the flag first:"; \
+	  echo "    make deploy-staging && make promote && make deploy-demo"; \
+	  exit 1; }
 	docker compose --profile demo up -d ownvault-demo
 	@$(MAKE) --no-print-directory smoke-demo
 

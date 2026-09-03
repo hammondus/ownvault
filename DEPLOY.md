@@ -245,6 +245,19 @@ Three operational points:
 - **The demo runs `OWNVAULT_TAG`** — production's image — because a demo of an
   older build than the one being demoed is a bug. `make promote` does not
   recreate it, so run `make deploy-demo` after promoting.
+
+  That coupling sets the order for a first run: **production must already be on
+  a build that carries `-demo`.** Start the demo before promoting one and the
+  container exits immediately with `flag provided but not defined: -demo`,
+  because the older binary has no such flag. `make deploy-demo` now proves the
+  image supports the flag before starting anything and stops with that
+  explanation, so the sequence on a fresh setup is:
+
+  ```sh
+  make deploy-staging   # build this revision, run it as staging, smoke
+  make promote          # production runs the image staging proved
+  make deploy-demo      # the demo now has an image that knows -demo
+  ```
 - **`make smoke-demo` checks `/js/version.js` for `APP_DEMO`**, not the app
   shell. A shell check would pass against production, whose proxy host is one
   line away in the same NPM config, and a demo silently running without the
