@@ -18,7 +18,7 @@
          #connect-err with the field ringed, not in a native bubble. -->
     <form id="connect-form" novalidate>
       <label>Server URL
-        <input id="c-server" type="url" placeholder="https://vault.example.com" required
+        <input id="c-server" type="text" placeholder="vault.example.com" required
                autocomplete="off" spellcheck="false">
       </label>
       <label>Vault ID
@@ -26,7 +26,9 @@
       </label>
       <!-- Secret inputs are type="text" + CSS masking, never type="password" —
            the same rule as the PWA. See DESIGN-DECISIONS.md. -->
-      <label>Server token <span class="dim">(if the server sets one)</span>
+      <!-- "Access token" is what the app calls it (Settings → Sync) — same
+           word for the same thing, or the user hunts for two secrets. -->
+      <label>Access token <span class="dim">(only if your server requires one)</span>
         <input id="c-token" class="masked" type="text" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
       </label>
       <p id="connect-err" class="err" hidden></p>

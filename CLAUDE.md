@@ -485,6 +485,10 @@ a bare semver line. Nothing else stores a version, so nothing can drift.
   from its own URL for the cache name — so a release invalidates the cache
   with no second number to bump. `web/sw.js` has **no** `VERSION` constant any
   more; do not reintroduce one.
+- `make extension` stamps it into the manifest it copies to
+  `dist/extension/`. Chrome requires a version there and cannot read `VERSION`
+  at runtime; the literal in `extension/manifest.json` is a placeholder
+  (`0.0.0`) that no build ships. Do not hand-edit it.
 
 **Update delivery is push, not polling.** `/events` sends
 `event: version` on every connection. A deploy restarts the server, which

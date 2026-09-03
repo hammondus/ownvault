@@ -99,6 +99,11 @@ extension:
 	rm -rf dist/extension
 	mkdir -p dist/extension/shared dist/extension/icons
 	cp extension/* dist/extension/
+	# Chrome demands a version in the manifest and can't read VERSION at
+	# runtime, so stamp it here. The checked-in literal is a placeholder;
+	# overwriting the copy keeps VERSION the only number anyone edits.
+	sed 's/"version": "[^"]*"/"version": "'"$$(cat VERSION)"'"/' \
+	  extension/manifest.json > dist/extension/manifest.json
 	cp $(EXT_SHARED) dist/extension/shared/
 	cp web/icons/icon-192.png web/icons/icon-512.png dist/extension/icons/
 	@echo "built dist/extension — load it unpacked from chrome://extensions"

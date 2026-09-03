@@ -283,13 +283,47 @@
 
   /* ---------- wiring ---------- */
 
-  // The form carries novalidate: these checks say the same things the native
-  // `required` / `type=url` bubbles would, but in the popup's own error line
-  // and with the offending field ringed. Sync.setServerUrl only trims — it
-  // never adds a scheme — so a schemeless address must be caught here or it
-  // becomes a relative fetch against the extension's own origin and fails
-  // with something unrecognisable. The protocol check also keeps anything but
-  // http(s) out of a value that goes straight to fetch().
+  // Loopback matches main.go's isLoopbackHost. With TLS up the server serves
+  // plain HTTP to loopback and redirects everything else, so http:// for a
+  // local dev server and https:// for anything that leaves the machine is
+  // what the server itself will accept. Never guess the other way round: the
+  // access token would ride an unencrypted hop.
+  function isLoopback(host) {
+    return (
+      host === "localhost" ||
+      host === "[::1]" ||
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+    );
+  }
+
+  // Typing "vault.example.com" is the obvious thing to do, and Sync.setServerUrl
+  // only trims — a schemeless value becomes a relative fetch against the
+  // extension's own origin. Fill the scheme in and write it back to the field,
+  // so the value on screen is the value that gets stored. A scheme needs the
+  // "//": "localhost:8080" parses as the protocol "localhost:", and is a host
+  // and port typed without one.
+  function normalizeServerUrl() {
+    var f = byId("c-server");
+    var addr = f.value.trim();
+    if (!addr || /^[a-z][a-z0-9+.-]*:\/\//i.test(addr)) {
+      f.value = addr;
+      return;
+    }
+    var host = "";
+    try {
+      host = new URL("https://" + addr).hostname;
+    } catch (e) {
+      /* malformed either way — left to connectFieldError */
+    }
+    f.value = (isLoopback(host) ? "http://" : "https://") + addr;
+  }
+
+  // The form carries novalidate: these checks say the same thing the native
+  // `required` bubble would, but in the popup's own error line and with the
+  // offending field ringed. They run after normalizeServerUrl, so a bare host
+  // already carries a scheme and what reaches here is genuinely malformed.
+  // The protocol check keeps anything but http(s) out of a value that goes
+  // straight to fetch().
   function connectFieldError() {
     var url = byId("c-server").value.trim();
     if (!url) return { msg: "Enter your Own Vault server's address.", fields: ["c-server"] };
@@ -301,7 +335,7 @@
     }
     if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
       return {
-        msg: "That server address isn't valid — include https:// at the front.",
+        msg: "That server address isn't valid. Use your server's web address, like vault.example.com.",
         fields: ["c-server"]
       };
     }
@@ -319,6 +353,7 @@
     var errEl = byId("connect-err");
     errEl.hidden = true;
     clearInvalid();
+    normalizeServerUrl();
 
     var bad = connectFieldError();
     if (bad) {
@@ -335,7 +370,7 @@
     }).then(function (res) {
       if (res.exists) return show("unlock-view");
       if (res.needsAuth) {
-        errEl.textContent = "Server refused the token.";
+        errEl.textContent = "Access token required or incorrect.";
         errEl.hidden = false;
         markInvalid(["c-token"]);
         return;

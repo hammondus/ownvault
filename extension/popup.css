@@ -34,7 +34,10 @@ section { padding: 12px; }
 label { display: block; margin-bottom: 10px; font-size: 0.85rem; }
 .dim { color: var(--dim); font-weight: normal; }
 
-input[type="text"], input[type="password"], input[type="url"], input[type="search"] {
+/* No type="password" in this list: the app has none anywhere, and a selector
+   for one invites the next person to add it. Secrets are type="text" +
+   .masked. See DESIGN-DECISIONS.md. */
+input[type="text"], input[type="search"] {
   width: 100%;
   margin-top: 3px;
   padding: 8px;

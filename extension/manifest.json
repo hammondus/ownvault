@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Own Vault",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Companion extension for an Own Vault server: unlock, search, and fill logins; copy passwords and verification codes.",
   "icons": {
     "128": "icons/icon-192.png",

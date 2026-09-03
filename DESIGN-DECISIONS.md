@@ -4,6 +4,35 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## The extension connect form fills in the scheme (2026-09)
+
+The first real install of the extension turned up two snags in its connect
+form, both about wording and typing rather than crypto.
+
+**The scheme is guessed, and loopback is the only case that guesses `http`.**
+`Sync.setServerUrl` only trims, so `vault.example.com` became a relative fetch
+against the extension's own origin and failed with an error naming neither the
+address nor the cause. `popup.js` `normalizeServerUrl` now prepends a scheme
+and writes it back into the field, so the stored value is the value on screen.
+It picks `http://` for loopback hosts and `https://` for everything else,
+mirroring `main.go` `redirectToTLS`: with TLS up the server serves plain HTTP
+to loopback and redirects the rest. Guessing the other way round — `http` for
+everything, or honouring a typed `http://` for a public host — would put the
+access token on an unencrypted hop, so the default never downgrades. A scheme
+is detected by `://`, because `localhost:8080` parses as the protocol
+`localhost:` and is in fact a host and port typed without one.
+
+**"Access token", not "server token".** The app says *Access token* in
+Settings, in the lock gate placeholder, and in `vaultui.js` error text. The
+extension called the same secret a *Server token*, which reads like a second
+credential to find. One name, everywhere.
+
+The build now also stamps `VERSION` into the manifest it copies. Chrome
+requires a version there and cannot read the file at runtime, so the
+alternative was a second number to bump by hand — exactly what the one-VERSION
+rule exists to prevent. The literal in `extension/manifest.json` is a
+placeholder that no build ships.
+
 ## The vault and the website are separate origins (2026-09)
 
 Before anyone used it for real, one hostname served the vault at `/`. The
