@@ -66,6 +66,46 @@ one hostname, the website could read the vault's IndexedDB and sync token. For
 the rest of that reasoning, see DESIGN-DECISIONS.md "The vault and the website
 are separate origins".
 
+### Certificates
+
+**A TLS wildcard matches exactly one label, and never a dot** (RFC 9525). So a
+zone-level `*.example` certificate covers `ownvault.example` and stops there:
+
+| Name | `*.example` | `*.ownvault.example` |
+|---|---|---|
+| `ownvault.example` | yes | no |
+| `app.ownvault.example` | no | yes |
+| `www.ownvault.example` | no | yes |
+| `staging.ownvault.example` | no | yes |
+
+A wildcard does not cover its own bare name either, so request **both
+`*.ownvault.example` and `ownvault.example`** as two names on one certificate.
+That single certificate then covers every host in the table above. A wildcard
+needs a DNS-01 challenge, so NPM needs credentials for the DNS provider.
+
+Single-name certificates work too, but each host then carries its own issuance
+and renewal, and the failure below is what one missed host looks like.
+
+The failure signature is misleading. The name resolves, plain HTTP answers 301,
+and only the HTTPS leg fails — which reads as a proxy fault. It is a
+certificate that does not cover the name:
+
+```
+Chrome:  ERR_CERT_COMMON_NAME_INVALID
+curl:    (60) SSL: no alternative certificate subject name matches target host
+```
+
+To see which certificate a host actually serves, run:
+
+```sh
+echo | openssl s_client -servername <host> -connect <host>:443 2>/dev/null \
+  | openssl x509 -noout -ext subjectAltName
+```
+
+**A Redirection Host has its own SSL tab.** Assigning a new certificate to the
+Proxy Hosts leaves `www.` on whatever it had, and it then redirects visitors
+into a certificate error.
+
 ### The vault hosts
 
 `app.` and `staging.` take the same settings.
