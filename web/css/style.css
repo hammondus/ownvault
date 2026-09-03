@@ -981,6 +981,27 @@ body.locked {
   color: #6b7580;
 }
 
+/* A finger-sized close button where the pointer is a finger. Keyed on
+   `pointer: coarse` rather than a UA check: the problem is a fingertip against
+   a ~24px target, which is identical on every touch device and absent with a
+   mouse. `pointer` reports the PRIMARY input, so a desktop keeps the compact
+   button, and an iPad driven by a trackpad reports `fine` and correctly keeps
+   it too. 44px is Apple's minimum tap target.
+   The negative margins grow the hit area outward into the card's 20px padding
+   instead of pushing the header taller — the glyph stays exactly where it was
+   next to the title, and only the area that answers a tap changes. */
+@media (pointer: coarse) {
+  .modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 1.35rem;
+    margin: -10px -10px -10px 0;
+  }
+}
+
 /* ---------- Forms (edit modal + settings) ---------- */
 
 .form-row {
