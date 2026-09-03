@@ -43,8 +43,15 @@ Flags:
 | `-to` | `$OWNVAULT_SITE_CONTACT_TO` | destination for contact mail |
 | `-baseurl` | empty | public origin, for the canonical and `og:` tags |
 | `-repo` | the GitHub URL | repository the links point at |
+| `-demo` | `$OWNVAULT_SITE_DEMO_URL` | demo vault server; blank hides every link to it |
 | `-trusted-proxies` | `private` | peers whose `X-Forwarded-For` is believed |
 | `-healthcheck` | off | probe a running server's `/healthz` and exit |
+
+`-demo` is the demo vault server's public URL. Leave it blank and the landing
+page renders with no demo links at all, which is correct for a deployment that
+runs no demo. It must include the scheme: without one the value would become a
+relative link pointing at a path on this site, so the server refuses to start.
+See the vault repository's DEPLOY.md, "The public demo", for the server itself.
 
 `-trusted-proxies` decides which client address the rate limiter counts
 against. `private` covers loopback and private space, which is the deployed

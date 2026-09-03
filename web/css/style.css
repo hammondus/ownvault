@@ -92,6 +92,56 @@ body {
   white-space: nowrap;
 }
 
+/* ---------- Demo server ---------- */
+
+/* Only a demo server serves window.APP_DEMO, so none of this can appear on a
+   real vault. Amber rather than the violet used for critical entries: this is
+   a warning about the server, not a property of an entry. */
+.demo-badge[hidden] {
+  display: none;
+}
+
+.demo-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #b45309;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* The badge is pushed right on its own; when the count is also showing, the
+   count takes the auto margin and the badge just follows it. The :not([hidden])
+   matters — adjacency ignores display:none, so a plain sibling rule would strand
+   the badge next to the title whenever the count is hidden. */
+.entry-count:not([hidden]) + .demo-badge {
+  margin-left: 8px;
+}
+
+.demo-notice[hidden] {
+  display: none;
+}
+
+.demo-notice {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.card-demo {
+  border-left: 3px solid #b45309;
+}
+
 /* ---------- Screens ---------- */
 
 main {

@@ -233,6 +233,17 @@ p { margin: 0 0 1em; }
 }
 .band-dark .section-lead { color: #a7bcd4; }
 
+/* The demo offer under the screenshots. Sits in a dark band, so it inherits
+   that band's link colour; centred and narrow so it reads as an invitation
+   rather than another paragraph of body copy. */
+.shots-demo {
+  max-width: 40em;
+  margin: 2em auto 0;
+  text-align: center;
+  font-size: 1.02rem;
+  color: #a7bcd4;
+}
+
 /* ---------- feature cards ---------- */
 
 .cards {

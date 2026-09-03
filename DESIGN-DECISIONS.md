@@ -1122,3 +1122,89 @@ can, and the gap is the reason both exist:
   case, a browser that quits before the deadline. Its concealed-write feature
   is worth little here — only Windows enforces concealment — so auto-clear
   after browser exit is the whole of its clipboard value to ownvault.
+
+## The demo server (2026-09)
+
+`-demo` turns the same binary into a public sandbox at its own hostname, so
+somebody can try Own Vault — including syncing a vault between two devices —
+without setting up a server. It is one compose service (`ownvault-demo`,
+behind its own profile) with its own volume, running the image production
+runs.
+
+**Why per-visitor vaults rather than one shared demo vault.** A shared vault
+means publishing a master password. That would make the ciphertext on the demo
+server effectively plaintext, and people type real passwords into demos, so a
+copy of that volume would be a copy of somebody's real credential. It would
+also mean each visitor reads whatever the last one typed, and any visitor can
+delete the lot. Instead every visitor creates a normal vault with their own
+master password, so the demo server holds the same opaque ciphertext a real
+one does. Nothing about the zero-knowledge property is relaxed for the demo.
+
+**Why the limits are a flag, not configuration.** Non-nil `store.demo` is what
+arms every check, and only `-demo` builds it. A server started without the flag
+cannot cap a write, cannot refuse a vault, and — the one that matters — cannot
+run the sweeper that deletes vaults. There is deliberately no env var and no
+retention setting: a destructive timer that a missing variable could point at
+the wrong database is exactly the failure this shape rules out.
+
+**What is bounded, and why each one is needed.**
+
+- **100 entries and 1 MB of ciphertext per vault**, enforced inside the push
+  transaction. `maxPushBytes` caps one request body; it does nothing about
+  accumulation, so without these one legitimately created vault could be grown
+  without limit. Only live entries count towards the entry limit (that is the
+  number the user sees in the app); the byte limit sums every stored row,
+  tombstones included, because that is what occupies the disk.
+- **2000 vaults on the server.** The per-vault caps bound each vault but not
+  how many exist, and creating one costs an attacker a single small write.
+  This is the only hard ceiling on the database, and with the 7-day expiry the
+  steady state stays under it.
+- **10 new vaults per address per 24 hours.** Not a disk bound — a botnet or a
+  single IPv6 allocation walks around it — but it stops one actor consuming the
+  server-wide cap and locking real visitors out for a week. Ten rather than a
+  smaller number because carrier-grade NAT puts many mobile users behind one
+  address.
+
+Over a per-vault cap the whole push fails with **507**, not a per-entry result:
+the client has no vocabulary for "this one entry did not fit", and 403 already
+means "write credential refused". The body is the reason, written for a person,
+and `sync.js` carries it into the sync status rather than reporting a bare
+status code.
+
+**Why the limits attach to the write-auth claim.** There is no create endpoint.
+A vault exists from the moment `checkWriteAuth` TOFU-claims it, so that insert
+is the only place a creation limit can live — which is also why it is the place
+that now records `created_at`.
+
+**Why `vault_auth.created_at` and not `entries.updated_at`.** The sweep needs an
+age, and `updated_at` arrives from the client. A device with a wrong clock — or
+one deliberately sending a far-future timestamp — would otherwise make its vault
+immortal. `created_at` is the only clock reading in the schema the server takes
+itself. The column was added additively (`ALTER TABLE` guarded by
+`pragma_table_info`, existing rows backfilled to now) so a production database
+opens unchanged under a server that never reads it.
+
+**Deletion is "removed from the server", not "gone".** A device that still holds
+a swept vault locally will push on its next sync and re-claim the id by TOFU,
+and the vault comes back. That is harmless — and friendly — but it is why the
+UI says the vault is deleted rather than promising the data is destroyed, and
+why the caps rather than the sweep are what actually bound a determined
+re-uploader.
+
+**How the client knows.** `/js/version.js` — already a handler, already
+`no-cache`, already CSP-clean — emits `window.APP_DEMO` as the retention in
+days. From the server, keyed on the origin, never localStorage: a stored flag
+would ride a browser profile into somebody's real vault, which is the same trap
+the deleted `syncEnabled` key set (see "No offline-only mode"). The exact
+deletion date rides the pull response, so a locked or never-synced device states
+the rule instead of guessing a date.
+
+The warning appears in three places, chosen by when a person would act on it:
+the lock gate (read before anything is entered), a badge on the app bar (the
+standing reminder), and a Settings card next to the export that rescues the
+data.
+
+**`ipQuota` duplicates the website's contact-form limiter.** `site/` is a
+separate Go module, on purpose, so the vault server never depends on
+`mailer`. Sharing forty lines is not worth collapsing that boundary.
+

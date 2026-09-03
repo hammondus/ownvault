@@ -447,6 +447,11 @@ Rules to keep when touching it:
 - **Anti-spam is four cheap layers**, not a CAPTCHA: off-screen honeypot,
   HMAC-signed render timestamp (3 s floor, 2 h ceiling), three submissions per
   IP per hour, 64 KiB body cap.
+- **The demo link is optional and env-driven.** `-demo` /
+  `OWNVAULT_SITE_DEMO_URL` fills `page.DemoURL`; every link to the demo sits
+  inside `{{if .DemoURL}}`, so a site with no demo server renders none of them
+  and the real hostname stays out of the repository. A schemeless value is
+  refused at startup — it would render as a relative link.
 - **Screenshots in `site/web/img/` are generated** by `site/tools/shots.js`
   (`make shots`, with the app running on :8080). After a UI change that alters
   what they show, regenerate rather than editing copy around a stale image.
@@ -498,9 +503,44 @@ one only when they differ.
 - **Minor and major are manual** — a deliberate call by Craig or by Claude
   proposing it. Minor for a new user-visible capability, major for a break
   users must be told about.
-- The app is **pre-1.0** (`0.1.0`). Craig is its only user, so semver's
+- The app is **pre-1.0** (see VERSION; don't restate the number here, it goes
+  stale). Craig is its only user, so semver's
   pre-1.0 convention applies: a minor bump may carry a breaking change. 1.0.0
   is a release he will call, not somewhere to drift one patch at a time.
+
+# Demo server
+
+`-demo` turns the same binary into a public sandbox on its own hostname
+(`ownvault-demo` in `docker-compose.yaml`, behind its own compose profile, with
+its own volume, running production's image). Visitors create ordinary vaults
+with their own master passwords, so nothing about the zero-knowledge property
+is relaxed — the demo just bounds what strangers can consume.
+
+Non-nil `store.demo` arms every demo check, and only the flag builds it: a
+server without `-demo` cannot cap a write, refuse a vault, or run the sweeper
+that deletes vaults. Keep that shape — the sweeper is the one destructive timer
+in the program, and a flag it cannot reach by misconfiguration is why it is
+safe.
+
+- **Caps** (`handlePush`, inside the transaction): 100 live entries and 1 MB of
+  stored ciphertext per vault. Over a cap the whole push fails with **507**
+  carrying a human-readable reason; `sync.js` shows it in the sync status.
+- **Creation limits** (`requireWriteAuth`, at the TOFU claim — there is no
+  create endpoint, so that insert is the only place they can live): 2000 vaults
+  server-wide, 10 per client address per 24 hours (`ipQuota`).
+- **Expiry**: `sweepDemo` deletes vaults 7 days after their first write, at
+  startup and hourly, keyed on `vault_auth.created_at` — the only clock reading
+  the server assigns itself. Never sort this by `entries.updated_at`, which the
+  client supplies and a bad clock would make immortal.
+- **The client learns it is a demo from `/js/version.js`** (`window.APP_DEMO`,
+  the retention in days), never from localStorage — a stored flag would ride a
+  browser profile into a real vault. The exact date rides the pull response.
+  `vaultui.js` `showDemoState` fills the lock gate notice, the app-bar badge,
+  and the Settings card.
+
+`make deploy-demo` / `make smoke-demo` / `make logs-demo`. The demo runs
+`OWNVAULT_TAG`, so run `make deploy-demo` after `make promote`. See
+DESIGN-DECISIONS.md "The demo server" and DEPLOY.md "The public demo".
 
 # Public Use
 As the server is zero trust, if you want public sync on your devices, you can

@@ -14,6 +14,7 @@ LDFLAGS := -s -w
 REV = $(shell git rev-parse --short=12 HEAD 2>/dev/null)$(shell git diff --quiet HEAD 2>/dev/null || echo -dirty)
 PROD_URL = $(shell grep -m1 '^OWNVAULT_URL=' .env 2>/dev/null | cut -d= -f2-)
 STAG_URL = $(shell grep -m1 '^OWNVAULT_STAGING_URL=' .env 2>/dev/null | cut -d= -f2-)
+DEMO_URL = $(shell grep -m1 '^OWNVAULT_DEMO_URL=' .env 2>/dev/null | cut -d= -f2-)
 
 # Rewrite one KEY=VALUE in .env, preserving every other line. awk rather than
 # `sed -i`, whose in-place flag is spelled differently on macOS and Linux.
@@ -25,7 +26,8 @@ endef
 .PHONY: build test run release clean extension version \
         version-patch version-minor version-major \
         docker-build deploy deploy-built deploy-staging deploy-staging-built \
-        promote rollback images smoke smoke-staging logs logs-staging
+        promote rollback images smoke smoke-staging smoke-demo \
+        deploy-demo stop-demo logs logs-staging logs-demo
 
 # Bump one field of the semver in ./VERSION. That file is the only place a
 # version lives: the Go binary embeds it, /js/version.js hands it to the
@@ -154,6 +156,20 @@ deploy-built:
 	@$(MAKE) --no-print-directory docker-build
 	@$(MAKE) --no-print-directory rollback TAG=$(REV)
 
+## deploy-demo: run (or re-point) the public demo on production's image
+# No build and no tag of its own: the demo runs whatever OWNVAULT_TAG names, so
+# it always shows the build production is serving. `make promote` does not
+# recreate it, so run this after promoting to bring the demo along.
+deploy-demo:
+	@grep -q '^OWNVAULT_TAG=..*' .env 2>/dev/null || { echo "no OWNVAULT_TAG in .env — deploy production first (see DEPLOY.md)"; exit 1; }
+	docker compose --profile demo up -d ownvault-demo
+	@$(MAKE) --no-print-directory smoke-demo
+
+## stop-demo: take the demo down (its vaults go with the volume only if you
+## also remove ownvault-demo-data, which nothing here does)
+stop-demo:
+	docker compose --profile demo stop ownvault-demo
+
 ## images: the tags available to promote or roll back to, newest first
 images:
 	@docker images ownvault --format '{{.Tag}}\t{{.CreatedSince}}\t{{.Size}}' | grep -v '^<none>' | head -20
@@ -198,6 +214,23 @@ smoke-staging:
 	  echo "SMOKE FAILED: $(STAG_URL) answered 200 but is not the vault (CSP mismatch) — check the NPM proxy host"; exit 1; \
 	done; echo "SMOKE FAILED: $(STAG_URL)/ not answering"; exit 1
 
+## smoke-demo: the demo answers, and answers AS the demo
+# Checking the shell like the other two would pass against production, whose
+# proxy host is one line away in the same NPM config. /js/version.js carries
+# APP_DEMO only when the server was started with -demo, so this proves the
+# instance and its flag at once — a demo silently running without the flag
+# would take no caps, no creation limits, and no expiry.
+smoke-demo:
+	@test -n "$(DEMO_URL)" || { echo "set OWNVAULT_DEMO_URL in .env to smoke-test"; exit 0; }
+	@case "$(DEMO_URL)" in http://*|https://*) ;; *) \
+	  echo "OWNVAULT_DEMO_URL must include the scheme, e.g. https://demo.ownvault.example"; exit 1;; esac
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+	  body=$$(curl -sL -m 10 "$(DEMO_URL)/js/version.js" 2>/dev/null); \
+	  case "$$body" in *APP_VERSION*) ;; *) sleep 2; continue;; esac; \
+	  case "$$body" in *APP_DEMO*) echo "smoke ok: $(DEMO_URL) (demo mode on)"; exit 0;; esac; \
+	  echo "SMOKE FAILED: $(DEMO_URL) is serving the vault but NOT in demo mode — it is production, or the -demo flag is missing"; exit 1; \
+	done; echo "SMOKE FAILED: $(DEMO_URL)/ not answering"; exit 1
+
 ## logs: follow production logs
 logs:
 	docker compose logs -f ownvault
@@ -205,3 +238,7 @@ logs:
 ## logs-staging: follow staging logs
 logs-staging:
 	docker compose --profile staging logs -f ownvault-staging
+
+## logs-demo: follow demo logs (the hourly sweep reports here)
+logs-demo:
+	docker compose --profile demo logs -f ownvault-demo

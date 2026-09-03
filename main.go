@@ -37,6 +37,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +103,21 @@ const (
 // only slows guessing; the token's entropy is the real defence, and 16
 // characters is the floor below which even limited guessing is a threat.
 const minTokenLen = 16
+
+// Demo mode (-demo) turns this binary into a public sandbox that anyone may
+// write to without a token. A private server trusts whoever holds the token,
+// so it leaves these quantities to its owner; a demo server trusts nobody and
+// has to bound every one of them. See DESIGN-DECISIONS.md "The demo server".
+const (
+	demoTTL        = 7 * 24 * time.Hour // a vault is deleted this long after its first write
+	demoTTLDays    = int(demoTTL / (24 * time.Hour))
+	demoSweepEvery = time.Hour      // how often the sweeper looks for expired vaults
+	demoMaxEntries = 100            // live entries per vault
+	demoMaxBytes   = 1 << 20        // stored ciphertext per vault, tombstones included
+	demoMaxVaults  = 2000           // live vaults on the whole server
+	demoIPVaults   = 10             // new vaults one client address may create...
+	demoIPWindow   = 24 * time.Hour // ...within this window
+)
 
 //go:embed all:web
 var embedded embed.FS
@@ -198,6 +214,78 @@ func (h *hub) broadcast(vault, msg string) {
 
 type store struct {
 	db *sql.DB
+	// demo is nil on a normal server, and that nil is what switches off every
+	// demo-only limit below. A demo server is the only one that hands out
+	// write access to strangers, so it is the only one that needs them.
+	demo *demoGate
+}
+
+// demoGate holds the state the demo limits need beyond the database: the
+// per-address creation log, and the proxy trust that turns a request into the
+// address to charge it to.
+type demoGate struct {
+	ips   *ipQuota
+	trust *nitrokit.ProxyTrust
+}
+
+// allowNewVault reports whether this request may bring a new vault into
+// existence, and why not when it may not. The global cap is checked first so
+// a full server does not also spend the caller's daily allowance.
+func (g *demoGate) allowNewVault(tx *sql.Tx, r *http.Request) (string, bool) {
+	var live int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM vault_auth`).Scan(&live); err != nil {
+		return "cannot count demo vaults right now, try again later", false
+	}
+	if live >= demoMaxVaults {
+		return fmt.Sprintf(
+			"the demo server is full; demo vaults are deleted %d days after they are created, so try again later",
+			demoTTLDays), false
+	}
+	if !g.ips.allow(g.trust.ClientIP(r).String()) {
+		return "too many demo vaults created from your address today; try again tomorrow", false
+	}
+	return "", true
+}
+
+// ipQuota allows a burst of events per window per address. A sliding log
+// rather than a token bucket because the counts are tiny and the semantics
+// ("ten in the last day") are then plain from the code. The same shape as the
+// website's contact-form limiter; that lives in the separate site module, so
+// this is a deliberate copy rather than a shared dependency.
+type ipQuota struct {
+	mu     sync.Mutex
+	seen   map[string][]time.Time
+	burst  int
+	window time.Duration
+}
+
+func newIPQuota(burst int, window time.Duration) *ipQuota {
+	return &ipQuota{seen: make(map[string][]time.Time), burst: burst, window: window}
+}
+
+func (q *ipQuota) allow(ip string) bool {
+	now := time.Now()
+	cutoff := now.Add(-q.window)
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	// Prune every key, not only this one: otherwise the map grows for the life
+	// of the process, one entry per address that ever created a vault.
+	for k, ts := range q.seen {
+		kept := slices.DeleteFunc(ts, func(t time.Time) bool { return !t.After(cutoff) })
+		if len(kept) == 0 {
+			delete(q.seen, k)
+		} else {
+			q.seen[k] = kept
+		}
+	}
+
+	if len(q.seen[ip]) >= q.burst {
+		return false
+	}
+	q.seen[ip] = append(q.seen[ip], now)
+	return true
 }
 
 func openStore(path string) (*store, error) {
@@ -253,10 +341,33 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 CREATE TABLE IF NOT EXISTS vault_auth (
   vault_id   TEXT PRIMARY KEY,
-  token_hash BLOB NOT NULL
+  token_hash BLOB NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT 0
 );`
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
+	}
+
+	// created_at arrived with the demo server's 7-day sweep. CREATE TABLE IF
+	// NOT EXISTS never alters a table that already exists, so add the column
+	// to older databases here. Ask the table what it has rather than matching
+	// the driver's error text, which is not part of any contract. The change
+	// is additive: a server that never reads the column is unaffected.
+	var hasCreatedAt int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('vault_auth') WHERE name = 'created_at'`).Scan(&hasCreatedAt); err != nil {
+		return nil, err
+	}
+	if hasCreatedAt == 0 {
+		if _, err := db.Exec(`ALTER TABLE vault_auth ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return nil, err
+		}
+		// Backfill to now. The real claim times are unrecoverable, and dating
+		// every existing vault to the epoch would tell a sweeper they all
+		// expired long ago.
+		if _, err := db.Exec(`UPDATE vault_auth SET created_at = ?`, time.Now().Unix()); err != nil {
+			return nil, err
+		}
 	}
 	return &store{db: db}, nil
 }
@@ -275,6 +386,70 @@ func nextRev(tx *sql.Tx, vault string) (int64, error) {
 		return 0, err
 	}
 	return rev, nil
+}
+
+// sweepDemo deletes every vault whose first write is older than demoTTL. It
+// runs only on a demo server (see main), and reads vault_auth.created_at —
+// the one clock reading in the schema the server assigns itself. Sorting by
+// entries.updated_at instead would let a device with a wrong (or deliberately
+// wrong) clock keep a vault alive forever.
+//
+// One transaction per vault rather than one big DELETE ... IN (...): the
+// server holds a single writer connection, and a sweep of a full server would
+// otherwise block sync behind it.
+func (s *store) sweepDemo() {
+	cutoff := time.Now().Add(-demoTTL).Unix()
+
+	rows, err := s.db.Query(`SELECT vault_id FROM vault_auth WHERE created_at < ?`, cutoff)
+	if err != nil {
+		log.Printf("demo sweep: %v", err)
+		return
+	}
+	var expired []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			break
+		}
+		expired = append(expired, id)
+	}
+	rows.Close()
+
+	swept := 0
+	for _, id := range expired {
+		if err := s.deleteVault(id); err != nil {
+			log.Printf("demo sweep: delete vault: %v", err)
+			continue
+		}
+		swept++
+	}
+	if swept > 0 {
+		log.Printf("demo sweep: deleted %d vault(s) older than %d days", swept, demoTTLDays)
+	}
+}
+
+// deleteVault removes every trace of one vault in a single transaction, so a
+// crash mid-sweep leaves the vault whole and the next sweep deletes it. A
+// partial delete is the state to avoid: an id stripped of its vault_auth row
+// but still holding entries is unclaimed, and the next writer would take it
+// over along with the leftover ciphertext.
+func (s *store) deleteVault(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM entries WHERE vault_id = ?`,
+		`DELETE FROM meta WHERE vault_id = ?`,
+		`DELETE FROM revs WHERE vault_id = ?`,
+		`DELETE FROM vault_auth WHERE vault_id = ?`,
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *store) maxRev(vault string) (int64, error) {
@@ -328,6 +503,7 @@ func main() {
 	token := flag.String("token", os.Getenv("OWNVAULT_TOKEN"), "shared-secret bearer token required for sync (recommended when public); env OWNVAULT_TOKEN")
 	plainHTTP := flag.Bool("plainhttp", false, "keep serving plain HTTP to non-localhost clients even when the TLS listener is up (e.g. HTTPS port firewalled, or TLS terminated elsewhere)")
 	healthcheck := flag.Bool("healthcheck", false, "probe the running server's /healthz and exit; backs the container HEALTHCHECK")
+	demo := flag.Bool("demo", false, "run as a public demo server: anyone may create a vault, vaults are capped and deleted 7 days after creation")
 	flag.Parse()
 
 	// The image is distroless: no shell, no curl, nothing a CMD-SHELL probe
@@ -368,17 +544,35 @@ func main() {
 	}
 	log.Printf("vault database: %s", *dbPath)
 
+	// Deployed behind Nginx Proxy Manager, so a request's peer is the proxy on
+	// a private Docker network. Trusting private peers is what keeps per-client
+	// bucketing working instead of collapsing every device into one bucket; a
+	// public peer's forwarding headers are still ignored.
+	trust := nitrokit.TrustPrivateProxies()
+
+	// Demo mode. The gate being non-nil is what arms every limit, including
+	// the sweeper that deletes vaults — so a server started without -demo can
+	// never run a destructive sweep, whatever else is misconfigured.
+	if *demo {
+		st.demo = &demoGate{ips: newIPQuota(demoIPVaults, demoIPWindow), trust: trust}
+		log.Printf("DEMO MODE: open to anyone; vaults capped at %d entries / %d KB, %d per server, %d per address per day, deleted after %d days",
+			demoMaxEntries, demoMaxBytes>>10, demoMaxVaults, demoIPVaults, demoTTLDays)
+		// Sweep at startup as well as hourly, so a restart cannot postpone
+		// expiry indefinitely on a server that is redeployed often.
+		go func() {
+			st.sweepDemo()
+			for range time.Tick(demoSweepEvery) {
+				st.sweepDemo()
+			}
+		}()
+	}
+
 	h := newHub()
 	mux := http.NewServeMux()
 
 	// Sync API. auth() enforces the token when one is configured, with a
 	// shared per-client failure limiter across every endpoint.
 	limiter := nitrokit.NewFailLimiter(authFailLimit, authFailWindow)
-	// Deployed behind Nginx Proxy Manager, so a request's peer is the proxy on
-	// a private Docker network. Trusting private peers is what keeps the
-	// limiter bucketing by real client instead of collapsing every device into
-	// one bucket; a public peer's forwarding headers are still ignored.
-	trust := nitrokit.TrustPrivateProxies()
 	mux.HandleFunc("/api/state", auth(*token, limiter, trust, st.handleState))
 	mux.HandleFunc("/api/meta", auth(*token, limiter, trust, st.handleMeta(h)))
 	mux.HandleFunc("/api/pull", auth(*token, limiter, trust, st.handlePull))
@@ -399,6 +593,14 @@ func main() {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		nitrokit.NoCache(w)
 		fmt.Fprintf(w, "window.APP_VERSION = %q;\n", appVersion)
+		// Demo mode reaches the client the same way: from the server, never
+		// from localStorage. A stored flag would ride a browser profile into
+		// somebody's real vault; this one cannot outlive the origin serving
+		// it. The value is the retention in days, so the banner's wording and
+		// the sweeper read one constant.
+		if *demo {
+			fmt.Fprintf(w, "window.APP_DEMO = %d;\n", demoTTLDays)
+		}
 	})
 
 	// Server-sent events: keepalive pings plus "changed" notifications when
@@ -730,7 +932,9 @@ func checkWriteAuth(tx *sql.Tx, vault, token, newToken string) (bool, error) {
 		if newToken != "" { // claim with the newer credential when rotating
 			sum = sha256.Sum256([]byte(newToken))
 		}
-		_, err = tx.Exec(`INSERT INTO vault_auth (vault_id, token_hash) VALUES (?, ?)`, vault, sum[:])
+		_, err = tx.Exec(
+			`INSERT INTO vault_auth (vault_id, token_hash, created_at) VALUES (?, ?, ?)`,
+			vault, sum[:], time.Now().Unix())
 		return err == nil, err
 	}
 	if err != nil {
@@ -749,8 +953,26 @@ func checkWriteAuth(tx *sql.Tx, vault, token, newToken string) (bool, error) {
 	return true, nil
 }
 
-// requireWriteAuth wraps checkWriteAuth with the HTTP error response.
-func requireWriteAuth(w http.ResponseWriter, r *http.Request, tx *sql.Tx, vault string) bool {
+// requireWriteAuth wraps checkWriteAuth with the HTTP error response, and on
+// a demo server applies the limits that gate bringing a NEW vault into
+// existence. There is no create endpoint — a vault exists from the moment the
+// TOFU claim below inserts its row — so the claim is the only place those
+// limits can live.
+func (s *store) requireWriteAuth(w http.ResponseWriter, r *http.Request, tx *sql.Tx, vault string) bool {
+	if s.demo != nil {
+		var claimed int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM vault_auth WHERE vault_id = ?`, vault).Scan(&claimed); err != nil {
+			http.Error(w, err.Error(), 500)
+			return false
+		}
+		if claimed == 0 {
+			if msg, ok := s.demo.allowNewVault(tx, r); !ok {
+				http.Error(w, msg, http.StatusTooManyRequests)
+				return false
+			}
+		}
+	}
 	ok, err := checkWriteAuth(tx, vault, writeAuthToken(r), r.Header.Get("X-Vault-Write-New"))
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -850,7 +1072,7 @@ func (s *store) handleMeta(h *hub) http.HandlerFunc {
 				return
 			}
 			defer tx.Rollback()
-			if !requireWriteAuth(w, r, tx, vault) {
+			if !s.requireWriteAuth(w, r, tx, vault) {
 				return
 			}
 			rev, err := nextRev(tx, vault)
@@ -923,6 +1145,17 @@ func (s *store) handlePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp["rev"] = rev
+
+	// On a demo server, tell the client when this vault gets deleted. Sent on
+	// every pull rather than as its own endpoint: the banner is only shown
+	// inside the unlocked app, which is already pulling.
+	if s.demo != nil {
+		var created int64
+		if err := s.db.QueryRow(
+			`SELECT created_at FROM vault_auth WHERE vault_id = ?`, vault).Scan(&created); err == nil && created > 0 {
+			resp["demoExpires"] = created + int64(demoTTL.Seconds())
+		}
+	}
 	nitrokit.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -961,18 +1194,40 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 		}
 		defer tx.Rollback()
 
-		if !requireWriteAuth(w, r, tx, vault) {
+		if !s.requireWriteAuth(w, r, tx, vault) {
 			return
 		}
 
+		// Demo caps. Read once, then tracked across the batch, so a push
+		// cannot step over the ceiling one item at a time. Only live entries
+		// count towards the entry limit — that is the number the user sees in
+		// the app — while the byte limit sums every stored row, tombstones
+		// included, because that is what occupies the disk.
+		var liveEntries, usedBytes int64
+		if s.demo != nil {
+			if err := tx.QueryRow(
+				`SELECT COALESCE(SUM(CASE WHEN deleted = 0 THEN 1 ELSE 0 END), 0),
+				        COALESCE(SUM(LENGTH(ciphertext)), 0)
+				 FROM entries WHERE vault_id = ?`, vault).Scan(&liveEntries, &usedBytes); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+		}
+
 		for _, it := range body.Entries {
-			var curRev int64
-			err := tx.QueryRow(`SELECT rev FROM entries WHERE vault_id = ? AND id = ?`, vault, it.ID).Scan(&curRev)
+			var curRev, curLen int64
+			var curDel int
+			curLive := false
+			err := tx.QueryRow(
+				`SELECT rev, COALESCE(LENGTH(ciphertext), 0), deleted FROM entries WHERE vault_id = ? AND id = ?`,
+				vault, it.ID).Scan(&curRev, &curLen, &curDel)
 			if errors.Is(err, sql.ErrNoRows) {
 				curRev = 0
 			} else if err != nil {
 				http.Error(w, err.Error(), 500)
 				return
+			} else {
+				curLive = curDel == 0
 			}
 
 			if curRev != it.Base {
@@ -1001,6 +1256,33 @@ func (s *store) handlePush(h *hub) http.HandlerFunc {
 				http.Error(w, "bad ciphertext", http.StatusBadRequest)
 				return
 			}
+			// Over a cap the whole push fails: the client keeps the entry
+			// dirty and shows the reason, which is the honest outcome — the
+			// user has to delete something before this vault accepts more.
+			// 507 rather than 403, which already means "write credential
+			// refused" to the client.
+			if s.demo != nil {
+				nextBytes := usedBytes - curLen + int64(len(ct))
+				nextLive := liveEntries
+				switch {
+				case !it.Deleted && !curLive:
+					nextLive++
+				case it.Deleted && curLive:
+					nextLive--
+				}
+				if nextLive > demoMaxEntries {
+					http.Error(w, fmt.Sprintf("demo vaults hold at most %d entries; delete one and try again", demoMaxEntries),
+						http.StatusInsufficientStorage)
+					return
+				}
+				if nextBytes > demoMaxBytes {
+					http.Error(w, fmt.Sprintf("demo vaults hold at most %d KB of encrypted data; delete an entry and try again", demoMaxBytes>>10),
+						http.StatusInsufficientStorage)
+					return
+				}
+				usedBytes, liveEntries = nextBytes, nextLive
+			}
+
 			newRev, err := nextRev(tx, vault)
 			if err != nil {
 				http.Error(w, err.Error(), 500)

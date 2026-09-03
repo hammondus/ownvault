@@ -39,6 +39,10 @@
          matches. Filled by vaultui.js renderList and cleared on lock — the
          gate covers the bar, but a count must never survive a lock. -->
     <span id="entry-count" class="entry-count" hidden></span>
+    <!-- Shown only on a demo server (window.APP_DEMO, set by /js/version.js).
+         The persistent reminder that this vault is temporary; Settings carries
+         the detail. Filled by vaultui.js showDemoState. -->
+    <span id="demo-badge" class="demo-badge" hidden></span>
   </header>
 
   <!-- Overlay shown behind the nav when it is open -->
@@ -96,6 +100,9 @@
     <div class="lock-card">
       <div class="lock-logo">🔐</div>
       <h1 class="lock-title">Own Vault</h1>
+      <!-- The loudest place the demo warning appears, because it is the one
+           the user reads BEFORE putting anything in the vault. -->
+      <p id="demo-notice" class="demo-notice" hidden></p>
       <form id="create-form" class="lock-form" hidden>
         <p class="lock-lead">Set a master password. It encrypts everything and
           cannot be recovered — there is no reset.</p>

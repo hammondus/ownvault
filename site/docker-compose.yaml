@@ -42,6 +42,10 @@ services:
       OWNVAULT_SITE_SMTP_USERNAME: "${OWNVAULT_SITE_SMTP_USERNAME:-}"
       OWNVAULT_SITE_SMTP_PASSWORD: "${OWNVAULT_SITE_SMTP_PASSWORD:-}"
       OWNVAULT_SITE_SMTP_FROM: "${OWNVAULT_SITE_SMTP_FROM:?set OWNVAULT_SITE_SMTP_FROM in .env — must be an identity your SMTP provider has verified}"
+      # The demo vault server this site links to. Blank (the default) hides
+      # every link to it, so the site is correct on a deployment that runs no
+      # demo — which is why this is `:-` and not `:?`.
+      OWNVAULT_SITE_DEMO_URL: "${OWNVAULT_SITE_DEMO_URL:-}"
     # -baseurl fills the canonical and og: tags. -trusted-proxies defaults to
     # "private", which covers NPM on this Docker network, so the client IP is
     # read from the X-Forwarded-For that NPM sets rather than being the proxy's

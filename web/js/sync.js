@@ -152,6 +152,7 @@ window.Sync = (function () {
   // id — a probe of an unknown vault must not leave a ghost registration.
   function selectVault(id) {
     if (window.Vault) Vault.use(id);
+    demoExpires = 0; // belongs to the vault being left, not the one arriving
     try {
       localStorage.setItem(CURRENT_KEY, id);
     } catch (e) {
@@ -202,6 +203,14 @@ window.Sync = (function () {
     return lastStatus;
   }
 
+  // Unix seconds at which a demo server deletes the active vault; 0 when the
+  // server is not a demo, or has not been reached yet this session.
+  var demoExpires = 0;
+
+  function getDemoExpires() {
+    return demoExpires;
+  }
+
   /* ---------- HTTP ---------- */
 
   function headers(extra) {
@@ -228,6 +237,15 @@ window.Sync = (function () {
     opts = opts || {};
     opts.headers = headers(opts.headers);
     return fetch(getServerUrl() + path, opts);
+  }
+
+  // 507 means the server has room for the vault but not for this write — a
+  // demo server's per-vault cap. The body is the reason, written for a person,
+  // so carry it through to the sync status instead of a bare status code.
+  function limitError(res) {
+    return res.text().then(function (t) {
+      throw { limit: true, message: (t || "").trim() };
+    });
   }
 
   function pull() {
@@ -258,6 +276,10 @@ window.Sync = (function () {
           })
           .then(function () {
             Vault.setCursor(data.rev);
+            // Only a demo server sends this: the unix time at which it
+            // deletes this vault. Absent everywhere else, which is what
+            // keeps the demo notice off a real vault.
+            demoExpires = data.demoExpires || 0;
           });
       });
   }
@@ -288,6 +310,7 @@ window.Sync = (function () {
           .then(function (res) {
             if (res.status === 401) throw { auth: true };
             if (res.status === 403) throw { writeAuth: true };
+            if (res.status === 507) return limitError(res);
             if (!res.ok) throw new Error("meta " + res.status);
             return res.json();
           })
@@ -335,6 +358,7 @@ window.Sync = (function () {
           .then(function (res) {
             if (res.status === 401) throw { auth: true };
             if (res.status === 403) throw { writeAuth: true };
+            if (res.status === 507) return limitError(res);
             if (!res.ok) throw new Error("push " + res.status);
             return res.json();
           })
@@ -383,6 +407,13 @@ window.Sync = (function () {
         syncing = false;
         if (err && err.auth) {
           emit({ state: "error", ok: false, message: "Sync auth failed — check token", conflicts: lastStatus.conflicts });
+        } else if (err && err.limit) {
+          emit({
+            state: "error",
+            ok: false,
+            message: err.message || "This vault is full",
+            conflicts: lastStatus.conflicts
+          });
         } else if (err && err.writeAuth) {
           // Another vault (different master password/key) already claimed
           // this Vault ID on the server, or the vault was re-encrypted
@@ -627,6 +658,7 @@ window.Sync = (function () {
     selectVault: selectVault,
     onStatus: onStatus,
     getStatus: getStatus,
+    getDemoExpires: getDemoExpires,
     syncNow: syncNow,
     syncSoon: syncSoon,
     bootstrap: bootstrap,

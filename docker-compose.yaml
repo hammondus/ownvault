@@ -100,6 +100,40 @@ services:
       # production token so first-time setup needs only one secret.
       OWNVAULT_TOKEN: "${OWNVAULT_STAGING_TOKEN:-${OWNVAULT_TOKEN:-}}"
 
+  # The public demo. Opt-in via its own profile, like staging, so a plain
+  # `docker compose up -d` can never start it.
+  #
+  # Point a third Nginx Proxy Manager host at ownvault-demo:8080.
+  #
+  # Three things differ from production, all of them deliberate:
+  #
+  #   - `-demo` in the command. That flag is what caps each vault (100 entries
+  #     / 1 MB), limits new vaults (2000 per server, 10 per address per day)
+  #     and arms the sweeper that deletes vaults 7 days after their first
+  #     write. A server started without it can never run that sweep, whatever
+  #     else is misconfigured — which is why the flag, not an env var, is the
+  #     switch.
+  #   - No token. The demo is meant to be walked into by strangers, so it is
+  #     the one instance that runs open. Set explicitly rather than omitted, so
+  #     nobody reads the absence as an oversight.
+  #   - Its own volume. Demo vaults are deleted on a schedule; nothing that
+  #     runs a DELETE on a timer shares a database with real vaults.
+  #
+  # It runs OWNVAULT_TAG — the same image production runs — because a demo of
+  # an older build than the one being demoed is a bug. `make promote` does not
+  # recreate it; run `make deploy-demo` after promoting (DEPLOY.md says so too).
+  ownvault-demo:
+    <<: *ownvault-common
+    profiles:
+      - demo
+    image: "ownvault:${OWNVAULT_TAG:-unset}"
+    container_name: ownvault-demo
+    command: ["-addr", ":8080", "-db", "/data/ownvault.db", "-demo"]
+    volumes:
+      - ownvault-demo-data:/data
+    environment:
+      OWNVAULT_TOKEN: ""
+
 volumes:
   # Explicit names so backups don't depend on the compose project name.
   # The DB is client-encrypted ciphertext end to end, so a host-level copy is
@@ -109,6 +143,9 @@ volumes:
     name: ownvault-data
   ownvault-staging-data:
     name: ownvault-staging-data
+  # Not worth backing up: everything in it is deleted after 7 days by design.
+  ownvault-demo-data:
+    name: ownvault-demo-data
 
 networks:
   blobbyboo:

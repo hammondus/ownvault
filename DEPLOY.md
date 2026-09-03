@@ -197,6 +197,8 @@ make rollback TAG=<sha>   # container swap to any built tag (see make images)
 make deploy               # build straight to production (skips staging)
 make logs                 # follow production logs
 make deploy-staging-built # stage the current tree without pulling (hotfix/branch)
+make deploy-demo          # run (or re-point) the public demo on production's image
+make logs-demo            # follow demo logs — the hourly sweep reports here
 ```
 
 ## Staging is a separate vault world — by design
@@ -214,6 +216,47 @@ volume as a habit: it works (the file is ciphertext; the write-auth
 credential derives from the vault key, not the host), but then staging holds
 real vaults' ciphertext and any device knowing the Vault ID + staging token
 can write to them there.
+
+## The public demo
+
+`make deploy-demo` starts a third instance, `ownvault-demo`, on its own
+hostname. It exists so somebody can try the app — including syncing between two
+devices — without setting up a server. Anyone may create a vault on it, no
+token required.
+
+To set it up:
+
+1. Add `OWNVAULT_DEMO_URL=https://demo.<your domain>` to `.env`.
+2. Add a fourth Nginx Proxy Manager host pointing at `ownvault-demo:8080`, the
+   same way the production and staging hosts are configured above.
+3. Run `make deploy-demo`.
+
+What the demo does differently, all of it driven by the `-demo` flag:
+
+- Each vault holds at most 100 entries and 1 MB of ciphertext.
+- The server holds at most 2000 vaults, and one address may create 10 a day.
+- Every vault is deleted 7 days after its first write. A sweeper runs at
+  startup and hourly; `make logs-demo` reports what it deleted.
+- The app shows the warning and the deletion date on the lock screen, the app
+  bar, and a Settings card.
+
+Three operational points:
+
+- **The demo runs `OWNVAULT_TAG`** — production's image — because a demo of an
+  older build than the one being demoed is a bug. `make promote` does not
+  recreate it, so run `make deploy-demo` after promoting.
+- **`make smoke-demo` checks `/js/version.js` for `APP_DEMO`**, not the app
+  shell. A shell check would pass against production, whose proxy host is one
+  line away in the same NPM config, and a demo silently running without the
+  flag would take no caps, no creation limits, and no expiry.
+- **Its volume (`ownvault-demo-data`) is not worth backing up.** Everything in
+  it is deleted after 7 days by design. Nothing that runs a DELETE on a timer
+  shares a database with real vaults, which is why it has a volume of its own.
+
+Deleting a vault removes it from the server, which is not the same as
+destroying the data: a device that still holds it locally re-claims the id on
+its next sync and the vault reappears. That is intended. The caps, not the
+sweep, are what bound somebody determined to re-upload.
 
 ## Backups
 

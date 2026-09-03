@@ -83,6 +83,7 @@ var (
 	addr    = flag.String("addr", ":8090", "HTTP listen address")
 	baseURL = flag.String("baseurl", "", "public origin, e.g. https://ownvault.app (used for canonical and og: tags)")
 	repoURL = flag.String("repo", "https://github.com/hammondus/ownvault", "GitHub repository URL")
+	demoURL = flag.String("demo", os.Getenv("OWNVAULT_SITE_DEMO_URL"), "public URL of the demo vault server; blank hides every link to it (env OWNVAULT_SITE_DEMO_URL)")
 	contact = flag.String("to", os.Getenv("OWNVAULT_SITE_CONTACT_TO"), "destination address for contact form mail (env OWNVAULT_SITE_CONTACT_TO)")
 	// Which peers may set X-Forwarded-For. The old -proxy boolean trusted the
 	// header from anyone, which made the per-IP submission limit bypassable by
@@ -105,6 +106,13 @@ func main() {
 			log.Fatal(err)
 		}
 		return
+	}
+
+	// A schemeless -demo value becomes a RELATIVE href in the template, so the
+	// demo buttons would quietly point at a path on this site. Refuse at
+	// startup rather than warn: a warning in a container log is never read.
+	if *demoURL != "" && !strings.HasPrefix(*demoURL, "http://") && !strings.HasPrefix(*demoURL, "https://") {
+		log.Fatalf("-demo must include the scheme, e.g. https://%s", *demoURL)
 	}
 
 	s, err := newServer()
@@ -279,6 +287,10 @@ type page struct {
 	Nav     string // which nav link is current
 	Canon   string // absolute URL, empty when -baseurl is unset
 	RepoURL string
+	// DemoURL is empty unless -demo is set, and every link to the demo is
+	// wrapped in {{if .DemoURL}}. A site without a demo server must not offer
+	// one, and the real hostname stays out of the repository.
+	DemoURL string
 
 	// Contact page state.
 	Token   string
@@ -314,6 +326,7 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, name string, sta
 		}
 	}
 	p.RepoURL = *repoURL
+	p.DemoURL = *demoURL
 	if *baseURL != "" && p.Canon == "" {
 		p.Canon = strings.TrimRight(*baseURL, "/") + r.URL.Path
 	}

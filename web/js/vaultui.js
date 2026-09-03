@@ -292,6 +292,7 @@
     show(byId("restore-msg"), false);
     clearLockInvalid();
     stopScan(); // reaching the gate mid-scan (connect or 2FA) must release the camera
+    showDemoState(); // every gate step carries the warning, create and connect most of all
     show(
       byId("connect-scan"),
       mode === "connect" &&
@@ -739,6 +740,57 @@
     if (window.Sync) Sync.start();
     refreshConflicts();
     reconcileVaultName();
+    showDemoState();
+  }
+
+  /* ---------- demo server ---------- */
+
+  // A demo server sets window.APP_DEMO (served by /js/version.js) to the number
+  // of days a vault survives. Everything here is a no-op anywhere else, so a
+  // real vault can never show a demo warning — and because the flag comes from
+  // the origin rather than localStorage, it cannot follow a browser profile
+  // into someone's own server.
+  function demoDeleteDate() {
+    var at = window.Sync && Sync.getDemoExpires ? Sync.getDemoExpires() : 0;
+    if (!at) return "";
+    return new Date(at * 1000).toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "long",
+      year: "numeric"
+    });
+  }
+
+  // Fills the three places the warning appears: the lock gate (read before
+  // anything is entered), a badge on the bar (the standing reminder), and a
+  // Settings card (the detail, next to the export that rescues the data).
+  function showDemoState() {
+    var days = window.APP_DEMO || 0;
+    if (!days) return;
+    var when = demoDeleteDate();
+    // The exact date arrives with the first pull, so a locked or offline
+    // device states the rule instead of guessing a date.
+    var deleted = when
+      ? "This vault is deleted on " + when + "."
+      : "Vaults are deleted " + days + " days after they are created.";
+
+    var badge = byId("demo-badge");
+    if (badge) {
+      badge.textContent = "Demo";
+      badge.title = deleted;
+      show(badge, true);
+    }
+    var notice = byId("demo-notice");
+    if (notice) {
+      notice.textContent =
+        "Demo server, for trying Own Vault. " + deleted + " Don't store real passwords here.";
+      show(notice, true);
+    }
+    var card = byId("demo-card");
+    if (card) {
+      var note = byId("demo-card-note");
+      if (note) note.textContent = deleted + " Don't store real passwords in a demo vault.";
+      show(card, true);
+    }
   }
 
   // The vault name is both the installed-app name (App, in app.js — local +
@@ -1698,6 +1750,7 @@
       renderList();
     }
     syncSettingsControls();
+    showDemoState(); // the Settings card arrives with the fragment
   });
   document.body.addEventListener("htmx:historyRestore", syncSettingsControls);
 
@@ -2536,6 +2589,7 @@
       showConflictBanner(s.conflicts || 0);
       var el2 = byId("sync-status");
       if (el2) el2.textContent = s.message || "";
+      showDemoState(); // the first pull is what turns the rule into a date
     });
   }
 

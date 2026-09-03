@@ -41,6 +41,7 @@ go build -o ownvault .             # production: single binary, web/ embedded
 ./ownvault                         # serve on :8080, DB at ownvault.db next to the binary
 ./ownvault -addr :3000             # different port
 ./ownvault -token "$(openssl rand -hex 16)"   # public deployment: require a shared secret
+./ownvault -demo                   # public demo: open, capped, vaults expire after 7 days
 ```
 
 Flags: `-addr` (HTTP, default `:8080`), `-db` (SQLite path, default
@@ -48,7 +49,15 @@ Flags: `-addr` (HTTP, default `:8080`), `-db` (SQLite path, default
 a shared secret on all `/api/*` calls), `-tlsaddr` (HTTPS, default `:8443`, used
 when cert/key exist), `-cert`/`-key`, `-healthcheck` (probe a running server's
 `/healthz` and exit — the container HEALTHCHECK runs the binary this way,
-because the distroless image has no shell).
+because the distroless image has no shell), and `-demo`.
+
+`-demo` runs a public sandbox: anyone may create a vault without a token, each
+vault is capped at 100 entries and 1 MB, the server holds at most 2000 vaults
+(10 new ones per address per day), and every vault is deleted 7 days after its
+first write. The app shows the warning and the deletion date. Use it only on a
+host dedicated to that purpose — the flag arms a sweeper that deletes vaults, so
+it must never point at a database holding real ones. See DEPLOY.md "The public
+demo".
 
 The SQLite driver is the pure-Go `modernc.org/sqlite` (no CGo), so the single
 binary cross-compiles and Docker images stay tiny. There is no build step for

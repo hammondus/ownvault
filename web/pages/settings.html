@@ -1,6 +1,16 @@
 <section class="screen">
   <h1>Settings</h1>
 
+  <!-- Revealed by vaultui.js only on a demo server. First card on the screen:
+       everything below it (change password, sync, backup) reads differently
+       once you know the vault is deleted on a date. -->
+  <div id="demo-card" class="card card-demo" hidden>
+    <h2 class="card-title">Demo vault</h2>
+    <p id="demo-card-note" class="card-note card-warn"></p>
+    <p class="card-note">To keep anything you have entered here, export a backup
+      below, then import it into a vault on your own server.</p>
+  </div>
+
   <div class="card">
     <h2 class="card-title">Vault</h2>
     <button id="lock-btn" class="btn" type="button">Lock now</button>

@@ -12,7 +12,12 @@
         them between your devices cannot read a single one.
       </p>
       <p class="hero-actions">
+        {{if .DemoURL}}
+        <a class="btn btn-gold" href="{{.DemoURL}}">Try the demo</a>
+        <a class="btn btn-ghost" href="{{.RepoURL}}">Get it on GitHub</a>
+        {{else}}
         <a class="btn btn-gold" href="{{.RepoURL}}">Get it on GitHub</a>
+        {{end}}
         <a class="btn btn-ghost" href="#how">How it works</a>
       </p>
       <p class="hero-sub">Install it as an app on your phone or desktop. Works fully offline. Chrome extension included.</p>
@@ -119,6 +124,14 @@
         <figcaption>Settings: lock, clipboard delay, master password, sync.</figcaption>
       </figure>
     </div>
+    {{if .DemoURL}}
+    <p class="shots-demo">
+      <a href="{{.DemoURL}}">Open the demo</a> to use the real app on a public
+      server, including syncing one vault between two devices. Demo vaults hold
+      100 entries, and every one is deleted seven days after it is created, so
+      keep real passwords out of them.
+    </p>
+    {{end}}
   </div>
 </section>
 
