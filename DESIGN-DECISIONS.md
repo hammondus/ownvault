@@ -4,6 +4,47 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Filling is injected on click, not a resident content script (2026-09)
+
+The first real fill attempt reported "No login fields found" on a super fund's
+login page. The cause was structural: `content_scripts` defaults to
+`all_frames: false`, the whole login form was inside an iframe, and the top
+frame it did run in held zero inputs and zero forms. Detection was never the
+problem — the script was looking at the wrong document.
+
+`content.js` is gone. `fillFields` now lives in `popup.js` and reaches the
+page through `chrome.scripting.executeScript` with `allFrames: true`, on a
+Fill click only. Two things made that better than adding `all_frames: true`
+to the manifest:
+
+- **executeScript returns one result per frame.** With several frames
+  listening for a runtime message, `chrome.tabs.sendMessage` resolves with
+  whichever frame replies first — usually the empty top frame, which would
+  report failure while the iframe filled correctly. Working out a winner
+  across independent replies needs either a response race or the
+  `webNavigation` permission to enumerate frames. An array of results needs
+  neither: take the frame that filled the most fields.
+- **Nothing is resident on any page.** The old script was injected into every
+  frame of every http(s) page the user visited, for its whole life, to serve
+  one message that arrives on a button press. Now the code reaches a page only
+  when the user clicks Fill, and only that tab. For a password manager, moving
+  from "always present everywhere" to "present for one call" is worth a
+  permission.
+
+The cost is the `scripting` permission, and that the injected function is
+serialized — it closes over nothing from `popup.js`, so `visible` and
+`setValue` are nested inside it rather than shared.
+
+Cross-origin iframes are covered by this, which walking same-origin
+`contentDocument` from the top frame would not have been. A hosted SSO widget
+is the common embedded-login shape, and it is always cross-origin.
+
+The field heuristic itself is unchanged and still deliberately simple: the
+first visible password input anchors the search, the username is the last
+visible text-ish input before it in the same form. Matching on `name` or `id`
+would need a per-site list; the positional rule needs none, and naturally
+skips a search box above the form.
+
 ## The extension connect form fills in the scheme (2026-09)
 
 The first real install of the extension turned up two snags in its connect
@@ -227,8 +268,9 @@ and re-encrypt master-password fields, the server access token in Settings and
 on the connect screen, and both extension popup fields. Each is a
 `type="text"` input carrying `.masked` (`-webkit-text-security: disc`) plus
 `autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off"`.
-`extension/content.js` still queries `input[type="password"]` — that reads
-*other* sites' login forms to fill them, and must keep doing so.
+`fillFields` in `extension/popup.js` still queries `input[type="password"]`
+— that reads *other* sites' login forms to fill them, and must keep doing
+so.
 
 Nothing weaker works. `autocomplete="off"` has not suppressed Chrome's save
 prompt since Chrome 34 (the Settings token field already carried it and still

@@ -214,6 +214,71 @@
     });
   }
 
+  // Injected into every frame of the active tab, and only on a Fill click.
+  // executeScript serializes this function and rebuilds it in the page, so it
+  // closes over nothing here — every helper it needs is nested inside.
+  //
+  // The password field anchors the search: take the first visible one, then
+  // the last visible text-ish input before it in the same form (or the whole
+  // document on formless pages). A username-first two-step login has no
+  // password field on screen and gets the username only, which is still a
+  // fill. Returns the list of fields filled, so the caller can tell which
+  // frame held the form.
+  function fillFields(username, password) {
+    function visible(el) {
+      if (!el) return false;
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    }
+
+    // React and friends track the native value setter rather than the
+    // attribute, so a bare assignment leaves the framework's own state stale
+    // and the form submits empty.
+    function setValue(input, value) {
+      var proto = Object.getPrototypeOf(input);
+      var desc =
+        Object.getOwnPropertyDescriptor(proto, "value") ||
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+      if (desc && desc.set) desc.set.call(input, value);
+      else input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    var pws = Array.prototype.filter.call(
+      document.querySelectorAll('input[type="password"]'),
+      visible
+    );
+    var pw = pws[0] || null;
+    var scope = (pw && pw.form) || document;
+    var candidates = Array.prototype.filter.call(
+      scope.querySelectorAll(
+        'input[type="text"], input[type="email"], input:not([type])'
+      ),
+      visible
+    );
+    var user = null;
+    if (pw) {
+      var pos = pw.compareDocumentPosition.bind(pw);
+      for (var i = 0; i < candidates.length; i++) {
+        if (pos(candidates[i]) & Node.DOCUMENT_POSITION_PRECEDING) user = candidates[i];
+      }
+    } else {
+      user = candidates[0] || null;
+    }
+
+    var filled = [];
+    if (user && username) {
+      setValue(user, username);
+      filled.push("username");
+    }
+    if (pw && password) {
+      setValue(pw, password);
+      filled.push("password");
+    }
+    return filled;
+  }
+
   function openDetail(id) {
     call("ov:credentials", { id: id }).then(function (e) {
       stopTotp();
@@ -254,12 +319,24 @@
       var fill = byId("fill-btn");
       fill.hidden = !tab || (!e.username && !e.password);
       fill.onclick = function () {
-        chrome.tabs.sendMessage(tab.id, {
-          type: "ov:fill",
-          username: e.username,
-          password: e.password
-        }).then(function (res) {
-          if (res && res.filled && res.filled.length) {
+        // allFrames because login forms are routinely in an iframe, leaving
+        // the top frame with no inputs at all; a hosted SSO widget always is.
+        // executeScript returns one entry per frame, which is what makes this
+        // reliable: a runtime message to the tab would resolve with whichever
+        // frame answered first, usually the empty top one.
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id, allFrames: true },
+          func: fillFields,
+          args: [e.username || "", e.password || ""]
+        }).then(function (results) {
+          // Only one frame holds the form, and frames that can't be injected
+          // report no result at all. Take the best answer: a frame that filled
+          // both fields beats one that only found a username.
+          var got = [];
+          (results || []).forEach(function (r) {
+            if (r && r.result && r.result.length > got.length) got = r.result;
+          });
+          if (got.length) {
             if (e.totp) {
               // 2FA prompt comes next on most sites; hand the code over.
               copy(currentTotpCode, false);

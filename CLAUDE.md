@@ -84,8 +84,8 @@ Hardening rules layered on that design (all in `vault.js` — keep them intact):
   autocapitalize="off"`. Browser save-password heuristics key on the input
   type, and a real password field invites Chrome to sync the master password
   into Google Password Manager. `autocomplete="off"` does not suppress the
-  prompt. The one exception is `extension/content.js`, which queries
-  `input[type="password"]` to fill *other* sites' login forms. See
+  prompt. The one exception is `fillFields` in `extension/popup.js`, which
+  queries `input[type="password"]` to fill *other* sites' login forms. See
   DESIGN-DECISIONS.md "No `type="password"` anywhere".
 
 ## Data model: per-entry encrypted records
@@ -419,9 +419,16 @@ Architecture (all extension-specific code in `extension/`):
   list with search and a "this site" match section → per-entry detail with
   copy buttons, live TOTP, and a Fill button. Secrets are fetched per entry
   on demand (`ov:credentials`), never held in bulk in the popup.
-- **content.js** — passive fill script: acts only on an `ov:fill` message
-  (sent by the popup, user-initiated, active tab only). Fills via the native
-  value setter + input/change events so framework-bound forms notice.
+- **Filling** is injected, not resident. There is no content script: the
+  popup's `fillFields` is handed to `chrome.scripting.executeScript` with
+  `allFrames: true` on a Fill click, so nothing runs on any page until the
+  user asks for it. `allFrames` is required — login forms are routinely in an
+  iframe, which leaves the top frame with no inputs at all. executeScript
+  returns one result per frame, and the popup takes the frame that filled the
+  most fields; a runtime message to the tab would instead resolve with
+  whichever frame answered first. The injected function is serialized, so it
+  must close over nothing. It fills via the native value setter +
+  input/change events so framework-bound forms notice.
 
 v1 is read + fill + copy: editing, restore, and vault creation stay in the
 PWA — the extension connects to an existing vault. Site matching is by

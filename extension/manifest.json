@@ -16,15 +16,8 @@
   "background": {
     "service_worker": "sw.js"
   },
-  "permissions": ["offscreen", "tabs", "clipboardWrite"],
+  "permissions": ["offscreen", "tabs", "scripting", "clipboardWrite"],
   "host_permissions": ["http://*/*", "https://*/*"],
-  "content_scripts": [
-    {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   }
