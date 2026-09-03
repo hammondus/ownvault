@@ -213,6 +213,18 @@ button is *already* accent-filled, and gold matches the app's padlock. The
 button's `aria-label` becomes "Menu pinned open, tap to release" so the state
 is not colour-only.
 
+Pinning is refused below 900 px, and now says so. Only the
+`@media (min-width: 900px)` rule moves the content column aside; pin the drawer
+on a narrower window and it covers the content, with no overlay to dismiss it.
+So `setPinned` drops the request. The drop used to be silent, which made a
+working gesture look broken — the button stayed dark, the drawer closed on the
+next tap, and nothing explained the refusal. Page zoom makes it easy to hit
+without realising: 900 CSS pixels at 125% zoom needs a 1125-pixel window.
+`requestPin` now shows a toast saying what happened and what to do about it.
+The guard stays inside `setPinned` too, and stays silent there: the load-time
+restore and the shrink handler both call it, and neither follows something the
+user just did.
+
 ## The website moved to nitrokit too (2026-09)
 
 `site/` now imports the same module as the vault server, one commit later. The

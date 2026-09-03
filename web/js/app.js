@@ -224,7 +224,7 @@
   }
 
   function setPinned(on) {
-    if (on && !pinQuery.matches) return; // too narrow — ignore the request
+    if (on && !pinQuery.matches) return; // too narrow — requestPin says why
     document.body.classList.toggle("nav-pinned", on);
     try {
       if (on) localStorage.setItem(PIN_KEY, "1");
@@ -240,6 +240,22 @@
     // third state, so name it for screen readers as the badge and the
     // button's accent fill do visually.
     if (on) btn.setAttribute("aria-label", "Menu pinned open, tap to release");
+  }
+
+  // The double-tap asks; setPinned decides. A refusal has to say so: below the
+  // threshold the button never turns gold and the drawer never stays, which is
+  // exactly what a broken gesture looks like. Only the gesture explains itself
+  // — the load-time restore and the shrink handler call setPinned directly and
+  // must stay silent, since neither is something the user just did.
+  function requestPin() {
+    if (!pinQuery.matches) {
+      showToast(
+        "Too narrow to pin — the drawer would cover the content. " +
+          "Widen the window."
+      );
+      return;
+    }
+    setPinned(true);
   }
 
   // Restore the pin (silently ignored on narrow screens), and drop it if the
@@ -404,7 +420,7 @@
     var isDoubleTap = now - lastTapAt < DOUBLE_TAP_MS;
     lastTapAt = now;
     if (isDoubleTap) {
-      if (!lastTapUnpinned) setPinned(true);
+      if (!lastTapUnpinned) requestPin();
       lastTapUnpinned = false;
     } else if (isPinned()) {
       setPinned(false);
