@@ -14,6 +14,15 @@
 #
 # .env beside this file (see .env.example) supplies the SMTP credentials and
 # the destination address. It is git-ignored.
+#
+# The project name is pinned rather than left to default to the directory
+# basename. Compose groups containers by project label, so two unrelated stacks
+# checked out into directories of the same name become one project, and each
+# reports the other's containers as orphans. Compose then suggests
+# `--remove-orphans`, which would delete a container belonging to a different
+# application. Pinning the name also survives renaming the clone directory.
+
+name: ovsite
 
 services:
   ovsite:
