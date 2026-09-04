@@ -1015,16 +1015,32 @@ body.locked {
   font-size: 1rem;
 }
 
-/* CSS-only password masking (view value + every secret input). Used instead
-   of type="password" so browser save-password/autofill heuristics never see a
-   credential field — including the master password itself, which Chrome would
-   otherwise offer to sync into Google Password Manager. See
-   DESIGN-DECISIONS.md "No type=password anywhere". */
+/* Password masking for the view value and every secret input. Used instead of
+   type="password" so browser save-password heuristics never see a credential
+   field — including the master password itself, which Chrome would otherwise
+   offer to sync into Google Password Manager.
+
+   Masked with a FONT whose every glyph is a dot, not `-webkit-text-security`.
+   That property is how WebKit draws its own password fields, so Safari's
+   password manager treats any element computing to it as a credential field
+   and offers to save the master password into iCloud Keychain — the same hole
+   the type="password" rule exists to close, reached by a different route.
+   Measured, not guessed: see DESIGN-DECISIONS.md "No type=password anywhere".
+
+   font-display: block, so a slow font shows nothing rather than briefly
+   showing the secret in clear text. */
+@font-face {
+  font-family: "text-security-disc";
+  src: url("/fonts/text-security-disc.woff2") format("woff2");
+  font-display: block;
+}
+
 .field-value.masked,
 .form-input.masked,
 .lock-input.masked {
-  -webkit-text-security: disc;
-  text-security: disc;
+  /* No fallback family on purpose: a fallback is a readable font, and naming
+     one invites the browser to show the secret if the woff2 ever fails. */
+  font-family: "text-security-disc";
 }
 
 /* Live TOTP verification code (record modal): monospace so digits keep a
@@ -1310,17 +1326,17 @@ textarea.form-input {
   gap: 10px;
 }
 
+/* Masked by the dots font like every other secret (see the .masked rules).
+   Revealed, it goes back to monospace: a recovery code is transcribed by
+   hand, so the digits and letters have to be unambiguous. */
 .rc-code {
   flex: 1;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "text-security-disc";
   overflow-wrap: anywhere;
-  -webkit-text-security: disc;
-  text-security: disc;
 }
 
 #rc-section.rc-revealed .rc-code {
-  -webkit-text-security: none;
-  text-security: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .rc-row-used .rc-code {

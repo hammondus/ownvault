@@ -296,6 +296,58 @@ The costs, accepted:
 This only stops *future* prompts. A master password already saved in Google
 Password Manager stays there until deleted by hand.
 
+### Safari: the masking CSS was itself the signal (2026-09)
+
+Removing `type="password"` stopped Chrome. Safari kept offering to save the
+master password into iCloud Keychain, on creating a vault, with the prompt
+surfacing at the next screen change.
+
+Bisected on the real app over a trusted HTTPS origin (Safari's password
+manager does not engage on plain `http://`, which invalidated a first round of
+testing on `python3 -m http.server`). Each case ran on its own cert-covered
+origin — `127.0.0.1`, `[::1]`, `192.168.8.103` — so Safari kept a separate
+save decision per case and nothing had to be cleared between runs:
+
+| Case | Shape | Prompt |
+|---|---|---|
+| create form, then navigate | as shipped | yes |
+| same fields, no `<form>` | | yes |
+| form, no confirm field | | yes |
+| plain input, placeholder still "Master password" | no masking | **no** |
+| masked input, the word absent from the whole page | | **yes** |
+
+So it is neither the form submission, nor the password/confirm pair, nor the
+wording. It is `-webkit-text-security` itself: WebKit renders its own
+`input[type=password]` with that property, so Safari's password manager treats
+anything computing to it as a credential field. The CSS chosen to escape
+Chrome recreated the same hole in Safari by another route.
+
+**Secrets are now masked with a font** whose every glyph is a dot
+(`text-security-disc.woff2`, 784 bytes, SIL Open Font License, from
+noppa/text-security), in `web/fonts/` and copied into the extension by
+`make extension`. No `-webkit-text-security` anywhere.
+
+Checked before adopting it, because a font masks only the characters it
+contains and browsers fall back per character for the rest — which would print
+part of a master password in clear text. It does not happen: ASCII, digits,
+symbols, spaces, Latin-1 accents, curly quotes, Cyrillic, Greek, CJK and emoji
+all render as dots. The font maps whole codepoint ranges onto the one glyph,
+so no fallback is ever reached.
+
+The trade-off this introduces is that masking now **fails open**: if the woff2
+does not load, the field shows plain text, where `-webkit-text-security` was
+built in. Three things narrow that, and none of them is a fallback family —
+naming one would be naming a readable font:
+
+- `<link rel="preload">` in the shell, so it is there before the lock gate paints.
+- `font-display: block`, so a slow font shows *nothing* rather than the secret.
+- The woff2 is in the service worker's `PRECACHE`; without it an offline
+  unlock screen would render the master password in clear text.
+
+`forceTextRepaint` is kept. The iOS repaint bug it works around was found with
+`-webkit-text-security`, and a font swap is the same kind of glyph-level change
+on the same engine; the cost of keeping it is one reassignment.
+
 ## The hamburger parks in the top bar, and pinning shows itself (2026-09)
 
 The hamburger used to default to the bottom right, floating over the content

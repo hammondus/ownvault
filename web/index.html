@@ -11,6 +11,10 @@
   <link rel="icon" type="image/svg+xml" href="/icons/lock.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <!-- The masking font for every secret field. Preloaded because the lock gate
+       is the first thing drawn and an unmasked master-password box, even
+       briefly, defeats the point. -->
+  <link rel="preload" href="/fonts/text-security-disc.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/css/style.css">
   <!-- refreshOnHistoryMiss: if the back button hits a page htmx has no
        snapshot for, do a real reload so the shell re-initialises cleanly.

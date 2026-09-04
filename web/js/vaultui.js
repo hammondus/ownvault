@@ -161,12 +161,17 @@
     return document.getElementById(id);
   }
 
-  // iOS WebKit doesn't repaint existing glyphs when -webkit-text-security
-  // changes: a revealed field keeps showing dots while characters typed
-  // *after* the toggle render correctly (desktop WebKit and Chromium repaint
-  // fine). Rewriting the content forces a fresh text layout. For an input the
-  // caret lands at the end, which is fine for a reveal tap. Call after every
+  // iOS WebKit doesn't repaint existing glyphs when the masking changes: a
+  // revealed field keeps showing dots while characters typed *after* the
+  // toggle render correctly (desktop WebKit and Chromium repaint fine).
+  // Rewriting the content forces a fresh text layout. For an input the caret
+  // lands at the end, which is fine for a reveal tap. Call after every
   // masked-class toggle.
+  //
+  // The bug was found with -webkit-text-security, which the masking no longer
+  // uses (it is a dots font now — see style.css). Kept because a font swap is
+  // the same kind of glyph-level change on the same engine, and the cost of
+  // keeping it is one reassignment.
   function forceTextRepaint(node) {
     if (node.tagName === "INPUT" || node.tagName === "TEXTAREA") {
       var v = node.value;
@@ -1425,7 +1430,7 @@
   }
 
   // Secrets are masked against shoulder surfing with the same CSS the view
-  // modal uses (-webkit-text-security on a type="text" input) rather than
+  // modal uses (a dots font on a type="text" input) rather than
   // type="password": browser save-password/autofill heuristics key on the
   // input type, and a real password field here would invite the browser to
   // capture vault entries into its own (cloud-synced) password store.

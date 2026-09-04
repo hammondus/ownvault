@@ -79,9 +79,15 @@ Hardening rules layered on that design (all in `vault.js` — keep them intact):
 - **No `type="password"` input anywhere in the app.** Every secret field —
   master password (create/unlock/change/re-encrypt), server access token,
   entry passwords and recovery codes, both extension popup fields — is a
-  `type="text"` input carrying `.masked` (`-webkit-text-security: disc`) plus
-  `autocomplete="off" spellcheck="false" autocorrect="off"
-  autocapitalize="off"`. Browser save-password heuristics key on the input
+  `type="text"` input carrying `.masked` plus `autocomplete="off"
+  spellcheck="false" autocorrect="off" autocapitalize="off"`. `.masked` applies
+  a **dots font** (`web/fonts/text-security-disc.woff2`), never
+  `-webkit-text-security` — WebKit draws its own password fields with that
+  property, so Safari offered to save the master password into iCloud Keychain
+  exactly as Chrome had. Do not reintroduce it, and do not give `.masked` a
+  fallback font family: a fallback is a readable font. The woff2 is preloaded
+  in the shell and listed in the service worker's `PRECACHE`, because if it
+  fails to load the field shows plain text. Browser save-password heuristics key on the input
   type, and a real password field invites Chrome to sync the master password
   into Google Password Manager. `autocomplete="off"` does not suppress the
   prompt. The one exception is `fillFields` in `extension/popup.js`, which

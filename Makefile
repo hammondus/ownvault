@@ -97,7 +97,7 @@ clean:
 EXT_SHARED = web/js/vault.js web/js/totp.js web/js/sync.js web/js/argon2.min.js
 extension:
 	rm -rf dist/extension
-	mkdir -p dist/extension/shared dist/extension/icons
+	mkdir -p dist/extension/shared dist/extension/icons dist/extension/fonts
 	cp extension/* dist/extension/
 	# Chrome demands a version in the manifest and can't read VERSION at
 	# runtime, so stamp it here. The checked-in literal is a placeholder;
@@ -105,6 +105,10 @@ extension:
 	sed 's/"version": "[^"]*"/"version": "'"$$(cat VERSION)"'"/' \
 	  extension/manifest.json > dist/extension/manifest.json
 	cp $(EXT_SHARED) dist/extension/shared/
+	# The masking font, copied from web/ for the same reason as the modules:
+	# one source of truth. Without it the popup's secret fields render in
+	# clear text — popup.css names no fallback family, deliberately.
+	cp web/fonts/text-security-disc.woff2 dist/extension/fonts/
 	cp web/icons/icon-192.png web/icons/icon-512.png dist/extension/icons/
 	@echo "built dist/extension — load it unpacked from chrome://extensions"
 
