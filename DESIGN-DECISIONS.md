@@ -344,6 +344,13 @@ naming one would be naming a readable font:
 - The woff2 is in the service worker's `PRECACHE`; without it an offline
   unlock screen would render the master password in clear text.
 
+One knock-on, worth knowing before touching these rules: `font-family` applies
+to `::placeholder`, where `-webkit-text-security` never did. Without handing the
+placeholder a readable font back, "Master password" renders as fifteen dots and
+an empty field looks filled in. The rule cannot say `inherit` — that inherits
+the dots font from the input — so it names `--font-ui`, which is why that
+custom property exists.
+
 `forceTextRepaint` is kept. The iOS repaint bug it works around was found with
 `-webkit-text-security`, and a font swap is the same kind of glyph-level change
 on the same engine; the cost of keeping it is one reassignment.

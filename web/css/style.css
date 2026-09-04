@@ -1,4 +1,7 @@
 :root {
+  /* The interface font. Named because the masked fields have to hand it back
+     to ::placeholder explicitly — see the .masked rules. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --nav-width: 260px;
   --nav-bg: #1f2733;
   --nav-fg: #e8edf2;
@@ -41,7 +44,7 @@ html, body {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-ui);
   background: var(--page-bg);
   color: var(--page-fg);
   /* Avoid horizontal scroll while the nav is off-canvas */
@@ -1041,6 +1044,17 @@ body.locked {
   /* No fallback family on purpose: a fallback is a readable font, and naming
      one invites the browser to show the secret if the woff2 ever fails. */
   font-family: "text-security-disc";
+}
+
+/* Hand the placeholder a readable font back. `-webkit-text-security` obscured
+   only a field's VALUE and left placeholders alone; font-family has no such
+   exemption, so "Master password" rendered as fifteen dots and an empty field
+   looked filled in. Cannot be `inherit` — that inherits the dots font from the
+   input itself. */
+.field-value.masked::placeholder,
+.form-input.masked::placeholder,
+.lock-input.masked::placeholder {
+  font-family: var(--font-ui);
 }
 
 /* Live TOTP verification code (record modal): monospace so digits keep a
