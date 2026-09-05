@@ -1,7 +1,8 @@
 # Own Vault
 
-A password manager you actually own. One master password unlocks a database of
-logins that is **encrypted in your browser** and only ever leaves it as
+A secrets manager you actually own. One master password unlocks a database of
+logins, two-factor keys, recovery codes, and anything else you put in a custom
+field. It is **encrypted in your browser** and only ever leaves it as
 ciphertext. The app is a PWA (install it to your phone or desktop, works fully
 offline); an optional single-binary Go server syncs it between your devices
 without ever being able to read it.
@@ -121,6 +122,21 @@ On the lock screen you can instead **Start a new vault**, which mints a fresh
 Vault ID. Every vault syncs: the server is the vault's off-device backup, and
 browser storage alone is too easy to lose. The app still works with the server
 unreachable and catches up when it returns.
+
+## What an entry holds
+
+Every entry carries a title, and then only what you give it: username,
+password, URL, notes, an authenticator key, and its 2FA recovery codes. The
+record view shows the fields an entry has and nothing else, so an entry that is
+a note or a licence key does not display empty login rows.
+
+**Custom fields** cover everything the built-in fields do not — an API key, a
+licence key, an account number, a wifi password, a seed phrase. Add them on
+the Edit screen under *Custom fields*: each is a label, a value, and a
+**Secret** checkbox. A secret field is masked in the record view, reveals on
+the eye toggle, and clears from the clipboard after copying, exactly like a
+password. Search matches custom field labels and values, and shows neither in
+the list.
 
 ## Sync, conflicts, and backup
 

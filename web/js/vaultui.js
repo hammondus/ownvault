@@ -6,7 +6,7 @@
  * icons with clipboard auto-wipe, and the reveal toggle. All vault crypto and
  * storage lives in vault.js; this file never touches keys or ciphertext.
  *
- * Screen fragments are swapped by htmx, so passwords-screen controls are bound
+ * Screen fragments are swapped by htmx, so secrets-screen controls are bound
  * via delegation on #main. The lock overlay and modal are persistent chrome in
  * index.html and are bound directly.
  */
@@ -1094,6 +1094,10 @@
     // though only title/username/url are displayed. The authenticator key and
     // recovery codes stay out: matching against base32/code noise only
     // produces baffling results.
+    // Custom fields join the haystack, labels and values alike: unlike the
+    // authenticator key they hold words a person chose, so matching them
+    // finds things rather than producing noise. Values stay out of the list
+    // rows, exactly as passwords and notes do.
     var hay = [
       entry.title,
       entry.username,
@@ -1101,6 +1105,11 @@
       entry.password,
       entry.notes
     ]
+      .concat(
+        (entry.fields || []).map(function (f) {
+          return f.label + "\n" + f.value;
+        })
+      )
       .join("\n")
       .toLowerCase();
     return hay.indexOf(term) !== -1;
@@ -1123,7 +1132,7 @@
     list.innerHTML = "";
 
     if (!entries.length) {
-      empty.textContent = "No passwords yet. Tap + to add one.";
+      empty.textContent = "No secrets yet. Tap + to add one.";
       show(empty, true);
     } else if (!shown.length) {
       empty.textContent = "No matches.";
@@ -1152,9 +1161,13 @@
 
   /* ==================== record modal ==================== */
 
+  // kind "password" means "a secret": masked by the dots font, revealable,
+  // and wiped from the clipboard after copying. Custom secret fields reuse
+  // it as-is rather than growing a parallel renderer.
   function copyRow(labelText, value, kind) {
     var isPassword = kind === "password";
     var isUrl = kind === "url";
+    var lower = labelText.toLowerCase();
     var valNode = el("span", {
       class: "field-value" + (isPassword ? " masked" : ""),
       text: value || ""
@@ -1168,7 +1181,8 @@
           class: "icon-btn",
           type: "button",
           "data-reveal": "1",
-          "aria-label": "Show password",
+          "data-reveal-name": lower,
+          "aria-label": "Show " + lower,
           text: "👁"
         })
       );
@@ -1346,7 +1360,8 @@
       notes: e.notes,
       critical: e.critical,
       totp: e.totp,
-      recovery: e.recovery
+      recovery: e.recovery,
+      fields: e.fields
     };
   }
 
@@ -1378,15 +1393,23 @@
       ])
     );
 
+    // Every row is conditional: an entry that is a note, a licence key or a
+    // seed phrase renders as its title and the fields it actually has, with
+    // no empty Username or URL row implying it is a broken login.
+    var custom = (entry.fields || []).map(function (f) {
+      return copyRow(f.label, f.value, f.secret ? "password" : "text");
+    });
+
     var body = el("div", { class: "modal-body" }, [
       entry.username ? copyRow("Username", entry.username, "text") : null,
       entry.password ? copyRow("Password", entry.password, "password") : null,
       entry.totp ? totpRow(entry.totp) : null,
       recoverySection(entry),
-      entry.url ? copyRow("URL", entry.url, "url") : null,
+      entry.url ? copyRow("URL", entry.url, "url") : null
+    ].concat(custom, [
       textField("Notes", entry.notes),
       el("div", { class: "field-when", text: when })
-    ]);
+    ]));
     card.appendChild(body);
 
     card.appendChild(
@@ -1449,6 +1472,7 @@
       class: "icon-btn",
       type: "button",
       "data-reveal-input": "1",
+      "data-reveal-name": labelText.toLowerCase(),
       "aria-label": "Show " + labelText.toLowerCase(),
       text: "👁"
     });
@@ -1481,6 +1505,7 @@
       class: "icon-btn",
       type: "button",
       "data-reveal-input": "1",
+      "data-reveal-name": "recovery codes",
       "aria-label": "Show recovery codes",
       text: "👁"
     });
@@ -1505,6 +1530,103 @@
       );
     }
     return row;
+  }
+
+  /* ---------- custom fields (edit form) ---------- */
+  // User-named rows are what turn the vault from a password manager into a
+  // general secrets manager, and they do it without an entry-type system:
+  // there is no "note type" or "API key type" to define, migrate and branch
+  // on — every entry is the same shape and carries whatever fields it needs.
+
+  // A field marked secret is masked and gets a reveal toggle; an ordinary one
+  // is plain text with neither. Toggling the checkbox has to move both, or a
+  // revealed field would silently stay readable after being marked secret.
+  function applyCfSecret(row, on) {
+    var input = row.querySelector(".cf-value");
+    var toggle = row.querySelector("[data-reveal-input]");
+    input.classList.toggle("masked", on);
+    toggle.hidden = !on;
+    toggle.textContent = "👁";
+    forceTextRepaint(input);
+  }
+
+  function cfRow(f) {
+    f = f || { label: "", value: "", secret: false };
+    var label = el("input", {
+      class: "form-input cf-label",
+      type: "text",
+      placeholder: "Label",
+      autocomplete: "off",
+      spellcheck: "false",
+      autocorrect: "off",
+      autocapitalize: "off",
+      "aria-label": "Field label",
+      value: f.label || ""
+    });
+    var value = el("input", {
+      class: "form-input cf-value",
+      type: "text",
+      placeholder: "Value",
+      autocomplete: "off",
+      spellcheck: "false",
+      autocorrect: "off",
+      autocapitalize: "off",
+      "aria-label": "Field value",
+      value: f.value || ""
+    });
+    var toggle = el("button", {
+      class: "icon-btn",
+      type: "button",
+      "data-reveal-input": "1",
+      "data-reveal-name": "field",
+      "aria-label": "Show field",
+      text: "👁"
+    });
+    var secretBox = el("input", {
+      type: "checkbox",
+      class: "form-check-input cf-secret",
+      "data-cf-secret": "1"
+    });
+    secretBox.checked = !!f.secret;
+
+    var row = el("div", { class: "cf-row" }, [
+      label,
+      el("div", { class: "cf-value-wrap" }, [value, toggle]),
+      el("label", { class: "cf-secret-label" }, [
+        secretBox,
+        el("span", { text: "Secret" })
+      ]),
+      el("button", {
+        class: "icon-btn cf-del",
+        type: "button",
+        "data-cf-del": "1",
+        "aria-label": "Remove this field",
+        text: "✕"
+      })
+    ]);
+    applyCfSecret(row, !!f.secret);
+    return row;
+  }
+
+  function customFieldsBlock(list) {
+    var rows = el("div", { class: "cf-list" }, (list || []).map(cfRow));
+    return el("details", { class: "form-details", id: "cf-block" }, [
+      el("summary", { class: "form-summary", text: "Custom fields" }),
+      el("p", {
+        class: "form-hint",
+        text:
+          "Anything else worth keeping: an API key, a licence key, an account " +
+          "number, a seed phrase. Mark a field secret to mask it and wipe it " +
+          "from the clipboard after copying."
+      }),
+      rows,
+      el("button", {
+        class: "btn btn-ghost cf-add",
+        type: "button",
+        "data-cf-add": "1",
+        text: "+ Add field"
+      })
+    ]);
   }
 
   function openModalEdit(entry) {
@@ -1548,6 +1670,26 @@
       el("span", { class: "form-check-label", text: "Critical — include on the printed emergency recovery sheet" })
     ]);
 
+    // Two-factor and custom fields collapse, because most entries use
+    // neither and an entry that is just a note should not open onto six empty
+    // credential rows. Each section starts open when the entry already has
+    // something in it, so editing never hides data behind a disclosure the
+    // user has to think to open.
+    var twofa = el("details", { class: "form-details" }, [
+      el("summary", { class: "form-summary", text: "Two-factor authentication" }),
+      // The site's 2FA setup key: bare base32, a pasted otpauth:// link
+      // (Totp.normalize sorts it out on save), or — where a camera exists —
+      // scanned from the site's enrolment QR via the shared scanner.
+      totpField(entry.totp),
+      recoveryEditField(entry.recovery)
+    ]);
+    if (entry.totp || (entry.recovery && entry.recovery.length)) {
+      twofa.open = true;
+    }
+
+    var custom = customFieldsBlock(entry.fields);
+    if (entry.fields && entry.fields.length) custom.open = true;
+
     // novalidate: the url field pre-fills a bare "https://" that native
     // type=url validation would reject and silently block submission on; we
     // normalise the url ourselves in saveFromForm.
@@ -1555,11 +1697,6 @@
       inputField("title", "Title", entry.title, "text"),
       inputField("username", "Username", entry.username, "text"),
       maskedField("password", "Password", entry.password),
-      // The site's 2FA setup key: bare base32, a pasted otpauth:// link
-      // (Totp.normalize sorts it out on save), or — where a camera exists —
-      // scanned from the site's enrolment QR via the shared scanner.
-      totpField(entry.totp),
-      recoveryEditField(entry.recovery),
       // Pre-fill the scheme on new entries to save typing; a bare scheme is
       // treated as empty on save.
       inputField("url", "URL", entry.id ? entry.url : entry.url || "https://", "url"),
@@ -1567,6 +1704,8 @@
         el("span", { class: "form-label", text: "Notes" }),
         notes
       ]),
+      twofa,
+      custom,
       criticalRow
     ]);
     card.appendChild(form);
@@ -1632,6 +1771,29 @@
         })[0];
         return { code: code, used: !!(prev && prev.used) };
       });
+    // Custom fields, read positionally rather than by name: repeated name
+    // attributes would come back from the form as RadioNodeLists and pair the
+    // wrong label with the wrong value the moment a row is deleted.
+    var custom = [];
+    var rows = form.querySelectorAll(".cf-row");
+    for (var i = 0; i < rows.length; i++) {
+      var cfLabel = rows[i].querySelector(".cf-label").value.trim();
+      var cfValue = rows[i].querySelector(".cf-value").value;
+      if (!cfLabel && !cfValue.trim()) continue; // an untouched blank row
+      // Refuse rather than drop: a value with no label is a secret the user
+      // typed, and silently discarding it on save is the one outcome worse
+      // than making them name it.
+      if (!cfLabel) {
+        toast("Give every custom field a label.");
+        return;
+      }
+      custom.push({
+        label: cfLabel,
+        value: cfValue,
+        secret: rows[i].querySelector(".cf-secret").checked
+      });
+    }
+
     var fields = {
       id: id || undefined,
       created: existing ? existing.created : undefined,
@@ -1642,7 +1804,8 @@
       notes: form.notes.value,
       critical: form.critical.checked,
       totp: totp,
-      recovery: recovery
+      recovery: recovery,
+      fields: custom
     };
     Vault.put(fields).then(function () {
       closeModal();
@@ -1823,7 +1986,7 @@
 
   // Re-render the list whenever the passwords fragment (re)appears.
   document.body.addEventListener("htmx:afterSwap", function () {
-    if (byId("passwords-screen") && Vault.isUnlocked()) {
+    if (byId("secrets-screen") && Vault.isUnlocked()) {
       searchTerm = "";
       renderList();
     }
@@ -1882,10 +2045,11 @@
         var showNow = inp.classList.contains("masked");
         inp.classList.toggle("masked", !showNow);
         forceTextRepaint(inp);
+        var inpName = revealInput.getAttribute("data-reveal-name") || "password";
         revealInput.textContent = showNow ? "🙈" : "👁";
         revealInput.setAttribute(
           "aria-label",
-          showNow ? "Hide password" : "Show password"
+          (showNow ? "Hide " : "Show ") + inpName
         );
       }
       return;
@@ -1893,13 +2057,11 @@
     var reveal = e.target.closest("[data-reveal]");
     if (reveal) {
       var span = reveal.parentNode.querySelector(".field-value");
-      if (span.classList.contains("masked")) {
-        span.classList.remove("masked");
-        reveal.textContent = "🙈";
-      } else {
-        span.classList.add("masked");
-        reveal.textContent = "👁";
-      }
+      var revName = reveal.getAttribute("data-reveal-name") || "password";
+      var nowShown = span.classList.contains("masked");
+      span.classList.toggle("masked", !nowShown);
+      reveal.textContent = nowShown ? "🙈" : "👁";
+      reveal.setAttribute("aria-label", (nowShown ? "Hide " : "Show ") + revName);
       forceTextRepaint(span);
       return;
     }
@@ -1909,6 +2071,19 @@
       var href = urlNode.textContent;
       if (href && !/^https?:\/\//i.test(href)) href = "https://" + href;
       if (href) window.open(href, "_blank", "noopener,noreferrer");
+      return;
+    }
+    var cfAdd = e.target.closest("[data-cf-add]");
+    if (cfAdd) {
+      var cfList = byId("cf-block").querySelector(".cf-list");
+      var fresh = cfRow(null);
+      cfList.appendChild(fresh);
+      fresh.querySelector(".cf-label").focus();
+      return;
+    }
+    var cfDel = e.target.closest("[data-cf-del]");
+    if (cfDel) {
+      cfDel.closest(".cf-row").remove();
       return;
     }
     var scanTotp = e.target.closest("[data-scan-totp]");
@@ -1960,6 +2135,15 @@
       var value = isPw ? valNode.dataset.real : valNode.textContent;
       copyValue(value, isPw);
     }
+  });
+
+  // The secret checkbox re-masks its row immediately, not on save, or the
+  // field's appearance would contradict its state. On "change" rather than
+  // "click" like the rest of the modal: the checkbox sits inside its <label>,
+  // so a click on the word "Secret" never reaches it through closest().
+  modalEl.addEventListener("change", function (e) {
+    var cfSecret = e.target.closest("[data-cf-secret]");
+    if (cfSecret) applyCfSecret(cfSecret.closest(".cf-row"), cfSecret.checked);
   });
 
   modalEl.addEventListener("submit", function (e) {
@@ -2052,9 +2236,10 @@
         el("strong", { text: "Keep this paper safe. " }),
         el("span", {
           text:
-            "It lists passwords in plain text — anyone holding it can use them " +
-            "without your master password. Store it somewhere physically secure " +
-            "and destroy old copies."
+            "It lists passwords, recovery codes, and custom fields in plain " +
+            "text — anyone holding it can use them without your master " +
+            "password. Store it somewhere physically secure and destroy old " +
+            "copies."
         })
       ])
     );
@@ -2090,6 +2275,12 @@
         );
       }
       field(rows, "URL", e.url);
+      // Custom fields print whether or not they are marked secret: the sheet
+      // is the last resort after every device is gone, and a licence key left
+      // off it is as lost as a password would be.
+      (e.fields || []).forEach(function (f) {
+        field(rows, f.label, f.value);
+      });
       field(rows, "Notes", e.notes);
       sheet.appendChild(el("div", { class: "ps-entry" }, rows));
     });
@@ -2116,7 +2307,8 @@
     }
     var warn =
       critical.length + " critical " + (critical.length > 1 ? "entries" : "entry") +
-      " will be printed IN PLAIN TEXT, including passwords.\n\n" +
+      " will be printed IN PLAIN TEXT, including passwords, recovery codes, " +
+      "and custom fields.\n\n" +
       "• Anyone who holds the paper has these secrets — no master password needed.\n" +
       "• Printers (especially shared / office / networked) can keep a copy of what they print.\n" +
       "• Store the sheet somewhere physically secure and shred it when it's replaced.";

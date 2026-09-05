@@ -112,7 +112,7 @@
       name: name,
       short_name: name,
       description:
-        "Own Vault: an offline-first, end-to-end encrypted password manager.",
+        "Own Vault: an offline-first, end-to-end encrypted secrets manager.",
       start_url: vaultUrl,
       scope: origin + "/",
       display: "standalone",

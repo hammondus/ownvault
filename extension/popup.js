@@ -315,6 +315,20 @@
         f.appendChild(row);
       }
       if (e.url) f.appendChild(field("URL", e.url, { copy: function () { return e.url; } }));
+      // Custom fields. A secret one masks and wipes like a password; an
+      // ordinary one is plain text with a copy button. Never auto-filled —
+      // fillFields only knows username and password.
+      (e.fields || []).forEach(function (cf) {
+        f.appendChild(
+          field(cf.label, cf.value, {
+            masked: !!cf.secret,
+            wipe: !!cf.secret,
+            copy: function () {
+              return cf.value;
+            }
+          })
+        );
+      });
 
       var fill = byId("fill-btn");
       fill.hidden = !tab || (!e.username && !e.password);

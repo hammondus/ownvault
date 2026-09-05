@@ -1358,6 +1358,106 @@ textarea.form-input {
   color: #8a94a0;
 }
 
+/* Collapsible sections in the edit form (two-factor, custom fields). Native
+   <details> like the connect step's instructions — no JS, nothing for the CSP
+   to block. Bordered rather than bare so a closed section still reads as a
+   place things can live, not as a stray link. */
+.form-details {
+  margin-bottom: 12px;
+  border: 1px solid #e3e8ec;
+  border-radius: 8px;
+  padding: 6px 12px 10px;
+}
+
+.form-summary {
+  cursor: pointer;
+  padding: 4px 0;
+  font-size: 0.85rem;
+  color: var(--accent);
+}
+
+.form-details[open] > .form-summary {
+  margin-bottom: 8px;
+}
+
+/* The last field in an open section sits against the section's own padding,
+   so drop the row's trailing margin. */
+.form-details > .form-row:last-child {
+  margin-bottom: 0;
+}
+
+.form-hint {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #6b7580;
+}
+
+/* Custom fields: label, value, a secret toggle and a remove button per row.
+   Wraps rather than scrolls — on a phone the four controls stack into two
+   lines instead of squeezing the value box down to nothing. */
+.cf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The tray matters most when the row wraps: on a narrow screen the secret
+   toggle and the remove button drop to a second line, and without a shared
+   background they read as loose controls rather than as part of the field
+   above them. */
+.cf-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #f5f7f9;
+}
+
+/* min-width: 0 on both, or a long value stretches the flex item past the
+   modal instead of scrolling inside its own input. */
+.cf-row .cf-label {
+  flex: 1 1 130px;
+  min-width: 0;
+}
+
+.cf-value-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1.3 1 150px;
+  min-width: 0;
+}
+
+.cf-value-wrap .form-input {
+  min-width: 0;
+}
+
+.cf-secret-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #6b7580;
+  white-space: nowrap;
+}
+
+/* Pushed to the far end so "remove this field" never sits shoulder to
+   shoulder with the Secret checkbox and read as belonging to it. */
+.cf-del {
+  flex: none;
+  margin-left: auto;
+  color: #8a939c;
+}
+
+.cf-add {
+  margin-top: 10px;
+}
+
 /* Scan link under the edit form's authenticator field: same link-button
    shape as .lock-link, recoloured for the light modal card. */
 .form-scan-link {

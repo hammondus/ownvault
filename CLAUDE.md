@@ -3,8 +3,9 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 # Own Vault
 
-A password manager built on top of the PWA template app (see "PWA Template"
-below). One master password unlocks a database of passwords. The PWA is the
+A secrets manager built on top of the PWA template app (see "PWA Template"
+below). One master password unlocks a database of secrets — logins, two-factor
+keys, recovery codes, and anything else, held in custom fields. The PWA is the
 primary client; the Go server is a zero-knowledge sync + hosting point.
 
 ## Client-side crypto (the core design rule)
@@ -258,6 +259,20 @@ The following data will be kept for each password entry
   shared between the connect screen and this (per-caller `{hint, onCode,
   onError}`), and the 2FA caller accepts only `otpauth:` payloads. Excluded
   from search. See DESIGN-DECISIONS.md for the one-factor trade-off.
+- `fields` — custom fields as `[{label, value, secret}]`. Optional; empty or
+  absent on entries that need none. This is what makes the vault general
+  rather than login-only: an API key, a licence key, an account number, or a
+  seed phrase is an ordinary entry carrying named values, with no entry-type
+  system to define, migrate, and branch on. A field marked `secret` gets the
+  masking font, a reveal toggle, and the password-style clipboard wipe;
+  an ordinary one is plain text with a copy button. Labels and values are both
+  searchable and neither is shown in list rows. `vault.js` `normFields` bounds
+  the list (50 fields, 100-character labels, 20,000-character values) and
+  coerces every entry to shape, like `recovery`. Critical entries print their
+  custom fields on the emergency recovery sheet. Saving refuses a field that
+  has a value but no label. See DESIGN-DECISIONS.md "Custom fields, not entry
+  types", which also records why attachments and an `owndocs` editor were
+  rejected.
 - `recovery` — the site's 2FA recovery codes as `[{code, used}]`. Optional;
   empty/absent when the entry has none. Edited as one code per line (a
   masked textarea); each code's `used` flag is set by tick-off checkboxes in
@@ -285,7 +300,9 @@ Whle in search mode, only title, username and url are shown, but the search
 will will include the passwork and notes fields in deciding what records
 to show.
 When the user clicks on a record, a modal appears, showing all the data
-for the record.
+for the record. Every row is conditional: a record with no username,
+password, or URL shows its title and whatever fields it does have, so an
+entry that is a note or a licence key never renders empty login rows.
 
 The username, password and url fields have an icon to copy their contents
 to the clipboard. Copying the password wipes the clipboard automatically after
@@ -303,6 +320,16 @@ code immediately on resume, and the interval is killed on modal close, entry
 switch, edit, and lock (the closure holds the secret, so it must never
 outlive the modal's plaintext). Critical entries print their authenticator
 key on the emergency recovery sheet.
+
+If the entry has custom fields (`fields`), the modal shows one row per field
+between the URL and the notes. A field marked `secret` renders like the
+password row — masked, with a reveal toggle and a clipboard wipe on copy —
+because it reuses `copyRow`'s password path rather than a second renderer.
+The edit form holds them in a **Custom fields** `<details>` section, one row
+of label, value, a secret checkbox, and a remove button, with an **Add field**
+button below. **Two-factor authentication** (authenticator key + recovery
+codes) collapses the same way. Both open when the entry already has something
+in them.
 
 If the entry has recovery codes (`recovery` field), the modal shows a
 **Recovery codes** section: an unused count, a reveal toggle (codes are

@@ -18,7 +18,7 @@
  *   - meta store: the wrapped-key record under key "vault".
  *   - entries store: envelopes {id, iv, ciphertext, updatedAt, deleted}.
  *     ciphertext decrypts to the payload {title, username, password, url,
- *     notes, critical, totp, recovery, created, modified}. Deletes are
+ *     notes, critical, totp, recovery, fields, created, modified}. Deletes are
  *     tombstones (deleted=true, payload dropped) so they can sync later.
  */
 window.Vault = (function () {
@@ -36,8 +36,35 @@ window.Vault = (function () {
   // sync (proper per-entry concurrency + tombstones), deliberately NOT the
   // wrapped-key meta doc (whose server write is last-writer-wins, so bundling a
   // user-editable name there could clobber a password change). It's hidden from
-  // the passwords list/search/count and never raises a user conflict.
+  // the secrets list/search/count and never raises a user conflict.
   var SETTINGS_ID = "__vault__";
+
+  // Bounds on custom fields, enforced wherever a payload is built. Tampered
+  // values can't leak anything — they decrypt under a key the server doesn't
+  // have — but a malformed backup carrying 100k fields, or one field holding
+  // a megabyte, would hang the render on a phone. The value cap still holds a
+  // PEM private key with room to spare.
+  var MAX_FIELDS = 50;
+  var MAX_FIELD_LABEL = 100;
+  var MAX_FIELD_VALUE = 20000;
+
+  // Coerce a custom-field list to shape, for the same reason recovery codes
+  // are coerced: nothing from a backup, an import, or the network gets to put
+  // a richer object into the payload than the UI knows how to render.
+  function normFields(list) {
+    return (list || [])
+      .slice(0, MAX_FIELDS)
+      .map(function (f) {
+        return {
+          label: String((f && f.label) || "").slice(0, MAX_FIELD_LABEL),
+          value: String((f && f.value) || "").slice(0, MAX_FIELD_VALUE),
+          secret: !!(f && f.secret)
+        };
+      })
+      .filter(function (f) {
+        return f.label || f.value;
+      });
+  }
 
   // Wrapped-key record KDF versions:
   //   v1 — PBKDF2-SHA256 (WebCrypto). Kept decodable forever: old backups
@@ -702,6 +729,11 @@ window.Vault = (function () {
         .filter(function (r) {
           return r.code;
         }),
+      // User-named {label, value, secret} rows. This is what makes the vault
+      // general: an API key, a licence key, a seed phrase or an account
+      // number is an ordinary entry with its own fields, with no entry-type
+      // system to maintain and no schema change on either side.
+      fields: normFields(fields.fields),
       created: fields.created || now,
       modified: now
     };

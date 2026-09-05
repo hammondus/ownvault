@@ -56,7 +56,7 @@ var PRECACHE = [
   // Masking font. If this is missing offline, the unlock screen shows the
   // master password as plain text, so it is not optional.
   "/fonts/text-security-disc.woff2",
-  "/pages/passwords.html",
+  "/pages/secrets.html",
   "/pages/settings.html",
   "/pages/about.html",
   "/manifest.webmanifest",

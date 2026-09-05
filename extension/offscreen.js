@@ -161,6 +161,10 @@
         var base = listItem(e);
         base.password = e.password || "";
         base.notes = e.notes || "";
+        // Custom fields ride the credentials message, never the list one:
+        // they can hold secrets, and listItem() is sent for every entry in
+        // the vault at once.
+        base.fields = e.fields || [];
         if (!e.totp) return base;
         return Totp.code(e.totp, Date.now()).then(function (r) {
           base.totp = r;

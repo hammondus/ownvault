@@ -4,6 +4,78 @@ Non-obvious choices and the reasoning behind them, for reviewers (human and
 Claude). The big architectural picture lives in CLAUDE.md; this file records
 the "we could have done X, we chose Y because…" calls. Newest at the top.
 
+## Custom fields, not entry types (2026-09)
+
+Own Vault holds general secrets, not only logins. The obvious way to get
+there is an entry *type* — login, note, card, key — each with its own field
+set. This app has custom fields instead: an optional `fields` payload entry
+holding `[{label, value, secret}]`, plus a view modal that renders only the
+rows an entry actually has.
+
+A type system costs more than it looks. Every type needs a picker in the add
+flow, a branch in the record modal, a branch in the edit form, a branch on the
+printed recovery sheet, and a rule for what search does with it. Adding the
+next type touches all five. Worse, the types are guesses: whatever set you
+pick, the thing the user wants to store next is the one you left out.
+
+Custom fields cost one payload key and one repeatable form row, and they don't
+guess. An API key, a licence key, an account number, a wifi password, and a
+seed phrase are all the same shape — a named value, sometimes secret — and
+they all work without the code knowing what any of them are.
+
+The pieces that make it hold together:
+
+- **The view modal was already conditional.** Each built-in row renders only
+  when it has a value, so an entry with no username, password, or URL shows
+  its title and its custom fields, with no empty rows implying a broken login.
+  That behaviour predates this change; the custom fields just made it visible.
+- **`secret: true` reuses `copyRow`'s password path** — the dots font, the
+  reveal toggle, and the clipboard wipe. There is no second renderer for
+  secrets to drift out of step with the first. The reveal buttons now carry
+  `data-reveal-name` so the label says "Show activation key" instead of
+  claiming everything is a password.
+- **Search matches labels and values, and displays neither.** Custom fields
+  join the haystack that already holds the password and the notes, because
+  unlike the authenticator key they hold words a person chose. List rows keep
+  showing title, username, and URL only.
+- **An unlabelled field blocks the save.** A value with no label is a secret
+  the user typed, and dropping it silently on save is worse than making them
+  name it. The save refuses with a toast, the same way a malformed
+  authenticator key already does.
+- **`normFields` bounds the list where the payload is built** — 50 fields, a
+  100-character label, a 20,000-character value, `secret` coerced to a
+  boolean, and anything with neither a label nor a value dropped. Tampered
+  values leak nothing, since they decrypt under a key the server does not
+  have. Absurd ones would hang the render on a phone. This is the same
+  defensive coercion the `recovery` list gets, and for the same reason.
+- **The server did not change at all.** The payload is JSON inside the
+  ciphertext, so a new field is a client-only change: no migration, no schema
+  version, and no way for an older client to corrupt a newer entry — it
+  round-trips fields it cannot render as opaque bytes. That property is why
+  `critical`, `totp`, and `recovery` were each a one-file change too.
+
+Two-factor and custom fields sit in `<details>` sections in the edit form,
+open when the entry already has something in them. Most entries use neither,
+and an entry that is a note should not open onto six empty credential rows.
+
+**Rejected: attachments.** Documents fail the test the rest of the vault
+passes — small, high-value, rarely edited, and worth surviving the loss of
+every device. They also break three things that currently hold: a pull moves
+every envelope since the cursor, so a multi-megabyte entry moves on every
+sync; the backup is one JSON file that works offline, and base64 in JSON
+inflates it by a third; and full re-encrypt is atomic only because every new
+ciphertext fits in memory before one IndexedDB transaction commits. If
+attachments ever land, each needs its own content key wrapped under the vault
+key, so re-encrypt rewraps a few small keys instead of rewriting megabytes —
+and the AAD has to bind both the attachment id and the owning entry id.
+
+**Rejected: an editor shared with `owndocs`.** `owndocs` stores document
+content server-side and merges Yjs state there; its search, comments,
+history, and git export all read plaintext. A document held in Own Vault
+would be an `owndocs` document with every one of those removed, leaving the
+editor widget — which costs a Svelte and npm build step in a project whose
+front end is deliberately vanilla, no-build, and precached file by file.
+
 ## Filling is injected on click, not a resident content script (2026-09)
 
 The first real fill attempt reported "No login fields found" on a super fund's
