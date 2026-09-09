@@ -1498,3 +1498,67 @@ Consequence to remember: the zero-knowledge argument for a client-generated
 manifest is now moot, because no vault name reaches the manifest at all. If a
 per-vault app name is ever wanted again, it needs paths, not query strings — and
 the same rule stands that the name must never be rendered server-side.
+
+## Content-hashed asset URLs (2026-09)
+
+The shell names its CSS and JS through a template func — `{{asset "js/app.js"}}`
+renders `/js/app.js?v=<12 hex of the content hash>` — and those URLs are served
+`public, max-age=31536000, immutable`. Anything unversioned gets an hour. Both
+carry an ETag.
+
+**The bug this fixes.** `web/index.html` referenced `/js/app.js` with no version
+query, and assets were left to the file server's defaults. Go's file server
+sends no `Cache-Control`, and an embedded file has a zero ModTime so it sends no
+`Last-Modified` either. With neither, Chrome falls back to heuristic caching and
+keeps the file for as long as it likes. The shell is `no-cache` and revalidates,
+so a deploy gives a client the new shell — naming asset URLs it already holds
+stale copies of. The client runs old JS against a new shell, silently.
+
+This was measured, not theorised. During the work on the installed-app name, a
+Chrome tab served `app.js` from `deliveryType: "cache"` at 27232 bytes while the
+server was serving 23100, and held on to it through repeated reloads, a version
+bump, `caches.delete()` on every Cache Storage entry, and
+`registration.unregister()`. Only switching to a different origin got fresh
+bytes. The service worker is network-first, which sounds like protection but is
+not: its `fetch` goes through the same HTTP cache, so it re-served the stale copy
+and then wrote it into its own precache.
+
+**Why hashing rather than `no-cache` on assets.** Revalidating every asset would
+also be correct, and simpler. It was rejected because embedded files have no
+ModTime and so nothing cheap to revalidate against — every load would re-transfer
+roughly 300 KB of JS. Hashing makes an unchanged asset cost zero requests, which
+matters for a PWA that is expected to open on a phone.
+
+**Why the shell became a template.** Hashed URLs must be written somewhere, and
+`index.html` was a static file. It is now the one template in the app, rendered
+through `nitrokit.Render`, which also gives it an ETag computed over the rendered
+bytes — so its mandatory `no-cache` costs a 304 rather than a full re-transfer,
+which is exactly the trade-off the HTTP caching house rule calls out. Parsed once
+in production, re-parsed per request under `-dev` so editing the shell still
+needs no restart.
+
+**Reused from nitrokit, not rebuilt.** `Assets` (hash once, correct only for
+embedded bytes) and `DirAssets` (stat per call, re-hash when size or mtime moves)
+already implement the house rule exactly, including the year/hour split. `-dev`
+gets `DirAssets` so editing `app.js` changes its URL on the next render with no
+restart — the precise failure above, closed at the source.
+
+**Deliberately left unhashed:**
+
+- `/js/version.js` — a handler, not a file, and `no-cache` on purpose: the
+  service worker's cache name derives from it, so a stale copy would pin the
+  whole app to an old cache.
+- `/fonts/text-security-disc.woff2` — `style.css` names it in a `url()`, which
+  no template touches. Hashing only the shell's `<link rel="preload">` would
+  make the two URLs disagree and fetch the font twice, and the preload would
+  warn instead of preloading.
+- `/icons/*` and `/manifest.webmanifest` — the manifest names its icons with
+  plain URLs, for the same reason.
+
+**The service worker matches with `ignoreSearch`.** `PRECACHE` lists plain paths;
+the page requests hashed ones. Without `ignoreSearch` an offline load misses,
+falls through to the `caches.match("/")` fallback, and every `<script>` receives
+the shell's HTML. Verified offline with the server stopped: all nine scripts
+served from cache, CSS applied, lock gate rendered, `/settings` served the cached
+shell. Keep `PRECACHE` entries unversioned — they only ever match because of that
+flag.

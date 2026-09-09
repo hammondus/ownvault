@@ -30,6 +30,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html/template"
 	"io"
 	"io/fs"
 	"log"
@@ -65,6 +66,16 @@ const maxSSEClients = 256
 // before the connection is killed. It replaces the server's WriteTimeout,
 // which must be 0 on a server that streams (see newVaultServer).
 const sseWriteBudget = 30 * time.Second
+
+// assetTree is the part of nitrokit's Assets/DirAssets that the shell needs:
+// URL for the cache-busting href a template writes, and a handler that serves
+// the bytes. Two implementations, because embedded bytes can be hashed once at
+// startup while a -dev tree is edited under the running server and must be
+// re-hashed when it changes.
+type assetTree interface {
+	http.Handler
+	URL(name string) string
+}
 
 // Browser-side defence in depth, passed to nitrokit.SecureHeaders explicitly
 // rather than taking its defaults: both defaults are wrong for this app.
@@ -536,6 +547,44 @@ func main() {
 		webRoot = sub
 	}
 
+	// Content-hashed asset URLs. The shell names every CSS and JS file through
+	// the {{asset}} template func, which appends ?v=<hash of the bytes>. A
+	// request whose ?v= matches is immutable for a year; an unversioned URL
+	// (the manifest's icons, a bookmark) gets an hour. Without this the
+	// browser heuristically caches an unversioned /js/app.js — Go's file
+	// server sends no Cache-Control, and embedded files have no ModTime to
+	// revalidate against — so a deploy can leave a client running old JS
+	// against a new shell.
+	//
+	// Embedded bytes cannot change without a rebuild, so hash them once.
+	// A -dev tree is served from disk and re-hashed whenever a file's size or
+	// mtime moves, so editing app.js changes its URL on the next render with
+	// no restart.
+	var assets assetTree
+	var err error
+	if *dev {
+		assets, err = nitrokit.NewDirAssets("web", "/")
+	} else {
+		assets, err = nitrokit.NewAssets(webRoot, "/")
+	}
+	if err != nil {
+		log.Fatalf("assets: %v", err)
+	}
+
+	// The shell is the one template in the app: it exists to write those
+	// hashed URLs, and nitrokit.Render gives it the ETag it never had (an
+	// embedded file has no ModTime, so a no-cache shell was a full
+	// re-transfer on every load). Parsed once in production; re-parsed per
+	// request under -dev so editing index.html needs no restart.
+	shellFuncs := template.FuncMap{"asset": assets.URL}
+	parseShell := func() (*nitrokit.Templates, error) {
+		return nitrokit.ParseTemplates(webRoot, shellFuncs)
+	}
+	shell, err := parseShell()
+	if err != nil {
+		log.Fatalf("parse shell: %v", err)
+	}
+
 	if *dbPath == "" {
 		*dbPath = defaultDBPath()
 	}
@@ -679,28 +728,61 @@ func main() {
 		}
 	})
 
+	// The hashed trees. /js/version.js stays on its own handler above: it is
+	// generated, not a file, and must stay no-cache because the service
+	// worker's cache name derives from it. A literal pattern beats this
+	// prefix, so registration order does not matter.
+	for _, prefix := range []string{"GET /css/", "GET /js/", "GET /fonts/", "GET /icons/"} {
+		mux.Handle(prefix, assets)
+	}
+
+	// renderShell writes the app shell. Every app route lands here, so the
+	// hashed URLs are recomputed per response under -dev.
+	renderShell := func(w http.ResponseWriter, r *http.Request) {
+		t := shell
+		if *dev {
+			var err error
+			if t, err = parseShell(); err != nil {
+				log.Printf("parse shell: %v", err)
+				http.Error(w, "template error", http.StatusInternalServerError)
+				return
+			}
+		}
+		// Render defaults to no-cache and adds an ETag over the rendered
+		// bytes, so the revalidation the house rule requires costs a 304.
+		if err := t.Render(w, r, "index.html", http.StatusOK, nil); err != nil {
+			log.Printf("render shell: %v", err)
+		}
+	}
+
 	files := http.FileServerFS(webRoot)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/")
-		if name == "" {
-			name = "index.html"
+		// index.html is a template now, never a file to serve raw — it would
+		// ship "{{asset ...}}" to the browser.
+		if name == "" || name == "index.html" {
+			renderShell(w, r)
+			return
 		}
 		if _, err := fs.Stat(webRoot, name); err == nil {
-			// House rule: HTML always revalidates. The shell and every htmx
-			// fragment name the asset URLs they load, so serving one stale is
-			// exactly what strands a client on old CSS or JS. The file server
-			// sends Last-Modified, so a revalidation costs a 304, not a
-			// re-transfer. Assets keep the file server's own defaults.
 			if strings.HasSuffix(name, ".html") {
+				// House rule: HTML always revalidates. Every htmx fragment
+				// names the asset URLs it loads, so serving one stale is
+				// exactly what strands a client on old CSS or JS.
 				nitrokit.NoCache(w)
+			} else {
+				// What is left is unhashed by design: sw.js (busted by the
+				// ?v= app version app.js registers it with) and the manifest
+				// (whose icon URLs are plain, so they must stay stable). An
+				// hour, because that URL's content can change under a client.
+				w.Header().Set("Cache-Control", "public, max-age=3600")
 			}
 			files.ServeHTTP(w, r)
 			return
 		}
 		// Not a real file, so it is an app route (/settings, ...): serve the
 		// shell and let the client load the matching fragment.
-		nitrokit.NoCache(w)
-		http.ServeFileFS(w, r, webRoot, "index.html")
+		renderShell(w, r)
 	})
 
 	// One chokepoint for the browser-side headers, wrapped in the write

@@ -40,6 +40,11 @@ function fetchWithTimeout(request) {
   );
 }
 
+// Unversioned paths on purpose. The shell asks for CSS and JS with a
+// ?v=<content hash> the server stamps in, which this worker cannot know at
+// install time — so every cache lookup below passes ignoreSearch, and a
+// hashed request matches the plain entry precached here. Keep the two in
+// step: an entry listed without a query only ever matches because of that.
 var PRECACHE = [
   "/",
   "/css/style.css",
@@ -130,9 +135,14 @@ self.addEventListener("fetch", function (e) {
         return res;
       })
       .catch(function () {
-        return caches.match(cacheKey).then(function (cached) {
-          return cached || caches.match("/");
-        });
+        // ignoreSearch: the page requests /js/app.js?v=<hash>, PRECACHE holds
+        // /js/app.js. Without it an offline load misses, falls through to the
+        // shell, and every <script> receives HTML.
+        return caches
+          .match(cacheKey, { ignoreSearch: true })
+          .then(function (cached) {
+            return cached || caches.match("/", { ignoreSearch: true });
+          });
       })
   );
 });

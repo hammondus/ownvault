@@ -190,8 +190,16 @@ Server hardening (in `main.go` — keep these when touching handlers):
   mkcert TLS listener and, via `hstsWhenProxied`, when a reverse proxy reports
   it terminated TLS. The app must stay CSP-clean: no inline scripts, styles, or
   `hx-on` attributes.
-- HTML responses (the shell and every htmx fragment) are served `no-cache`;
-  assets keep the file server's defaults. A stale shell names stale asset URLs.
+- HTML responses (the shell and every htmx fragment) are served `no-cache`,
+  because a stale shell names stale asset URLs. CSS and JS are served by
+  `nitrokit.Assets` (embedded, hashed once) or `NewDirAssets` (`-dev`, re-hashed
+  when the file changes) under `/css/`, `/js/`, `/fonts/`, `/icons/`: a URL
+  whose `?v=` matches the content hash is `immutable` for a year, anything
+  unversioned gets an hour, and both carry an ETag. `web/index.html` is a Go
+  template — the only one — purely so it can write those hashed URLs via
+  `{{asset "js/app.js"}}`; `nitrokit.Render` also gives it the ETag an embedded
+  file cannot have (no ModTime), so its `no-cache` costs a 304 rather than a
+  full re-transfer. See DESIGN-DECISIONS.md "Content-hashed asset URLs".
 - `/events` streams must flush through `http.NewResponseController(w)`, never a
   `w.(http.Flusher)` assertion: the handler runs inside `WriteBudget`, whose
   wrapper forwards flushing through `Unwrap` without implementing `Flusher`.
@@ -701,7 +709,14 @@ play over the incoming content.
 
 **Adding a screen** takes three edits: create `web/pages/<name>.html`, add the
 nav `<li>` in `web/index.html`, and add the fragment path to `PRECACHE` in
-`web/sw.js` + bump its `VERSION`.
+`web/sw.js`. Nothing to bump: the worker's cache name comes from the `?v=`
+app version in its own URL (see "Versioning and updates").
+
+**Adding a script or stylesheet** takes two: reference it from the shell as
+`{{asset "js/<name>.js"}}` — never a bare `/js/<name>.js`, which the browser
+will cache unversioned — and add the *unversioned* path to `PRECACHE`. The
+worker matches with `ignoreSearch`, so the plain entry answers the hashed
+request.
 
 **app.js** also owns the drawer (open/close + overlay) and the draggable
 hamburger button: pointer events, <8px movement = tap (toggles drawer),
