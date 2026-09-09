@@ -74,6 +74,12 @@
       <li><a class="nav-link" href="/"          hx-get="/pages/secrets.html"   hx-push-url="/"          data-title="Secrets">🔐 Secrets</a></li>
       <li><a class="nav-link" href="/settings"  hx-get="/pages/settings.html"  hx-push-url="/settings"  data-title="Settings">⚙️ Settings</a></li>
       <li><a class="nav-link" href="/about"     hx-get="/pages/about.html"     hx-push-url="/about"     data-title="About">ℹ️ About</a></li>
+      <!-- An action, not a route. A <button> rather than an <a>: there is no
+           fragment to fetch and no URL to push, and a button has nothing to
+           follow when htmx is absent. It still carries .nav-link, which is
+           what gives it app.js's close-the-drawer-on-click handler; the
+           vault work is vaultui.js's, which owns lockNow(). -->
+      <li class="nav-divider"><button id="lock-now" class="nav-link nav-action" type="button">🔒 Lock now</button></li>
     </ul>
   </nav>
 

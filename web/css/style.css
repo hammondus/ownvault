@@ -291,6 +291,25 @@ body.nav-pinned .nav-pin-badge {
   padding-left: 17px;
 }
 
+/* "Lock now" is an action, not a screen, so it is a <button> wearing the nav
+   link's styling. This resets the button chrome only — .nav-link still sets
+   the font size and colour, which a button would not inherit. */
+.nav-action {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Separates the actions at the foot of the drawer from the screens above. */
+.nav-divider {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
 /* ---------- Pinned drawer ---------- */
 
 /* Double-tapping the hamburger pins the drawer open (app.js). The overlay is

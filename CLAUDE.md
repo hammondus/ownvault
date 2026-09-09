@@ -399,8 +399,12 @@ Supporting flows the above depends on:
   has edit and delete actions. Deletes are tombstones (see the data model).
   Destructive prompts (delete, restore, print recovery sheet) use the in-app
   themed `confirmDialog()` in vaultui.js, never `window.confirm`.
-- **Auto-lock**: the vault re-locks after a period of inactivity and via an
-  explicit lock button, requiring the master password again.
+- **Auto-lock**: the vault re-locks after a period of inactivity and via
+  **Lock now**, requiring the master password again. Lock now is a menu item
+  in the drawer (`web/index.html`), not a Settings control: locking is a
+  thing you do in a hurry, and the drawer is one tap from every screen. It is
+  the drawer's only action rather than a route, so it is a `<button>` with
+  `.nav-link .nav-action` and no `hx-get` — see "Adding a menu action".
 - **Vault name**: the create screen prompts for a short name ("Home", "Work");
   it labels the lock screen, the vault picker, Settings, and `document.title`.
   It deliberately does **not** name the installed app — see "One installed app,
@@ -711,6 +715,15 @@ play over the incoming content.
 nav `<li>` in `web/index.html`, and add the fragment path to `PRECACHE` in
 `web/sw.js`. Nothing to bump: the worker's cache name comes from the `?v=`
 app version in its own URL (see "Versioning and updates").
+
+**Adding a menu action** — a drawer item that *does* something instead of
+navigating, such as **Lock now** — is a `<button class="nav-link nav-action">`
+in the `<li>`, with no `hx-get`, `hx-push-url`, or `data-title`. Keep
+`.nav-link`: `linkForPath` matches on `hx-push-url`, so an item without one
+never matches a path and never goes `.active`, while the class still earns the
+item its drawer styling and app.js's close-on-click handler. Bind the action by
+delegation on `document.body`, not `#main` — the drawer lives in the shell and
+is never swapped. Put the item below `.nav-divider`.
 
 **Adding a script or stylesheet** takes two: reference it from the shell as
 `{{asset "js/<name>.js"}}` — never a bare `/js/<name>.js`, which the browser

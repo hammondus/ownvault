@@ -2459,7 +2459,9 @@
   }
 
   document.body.addEventListener("click", function (e) {
-    if (e.target.closest("#lock-btn")) {
+    // "Lock now" lives in the drawer (web/index.html), not on a screen, so it
+    // is present whenever the app is unlocked.
+    if (e.target.closest("#lock-now")) {
       lockNow();
       return;
     }
