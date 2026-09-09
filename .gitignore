@@ -27,3 +27,8 @@
 
 # Test directory
 /testes/
+
+# Local module development against ../nitrokit. Never a go.mod replace:
+# that travels into the deploy build, where the relative path is wrong.
+go.work
+go.work.sum

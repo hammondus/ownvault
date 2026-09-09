@@ -8,7 +8,7 @@ go 1.26.5
 
 require (
 	github.com/hammondus/mailer v0.1.1
-	github.com/hammondus/nitrokit v0.1.1
+	github.com/hammondus/nitrokit v0.2.0
 )
 
 require (
