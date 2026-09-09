@@ -6,7 +6,15 @@
   <title>Own Vault</title>
   <meta name="theme-color" content="#0a1f3b">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <!-- The standards-track replacement; Chrome warns on the apple- form alone,
+       which iOS still needs. -->
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <!-- iOS ignores the manifest when naming a Home Screen icon and falls back
+       to <title>, which JS rewrites per screen. Pin the app name here so the
+       icon is "Own Vault" whatever screen was open at install time. The vault
+       name is deliberately NOT used: one icon holds every vault. -->
+  <meta name="apple-mobile-web-app-title" content="Own Vault">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="/icons/lock.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">

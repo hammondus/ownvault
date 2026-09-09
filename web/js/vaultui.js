@@ -565,7 +565,7 @@
       return;
     }
     // Straight to unlock of the active vault (selected at load from
-    // currentVault or the icon's ?vault=); the picker is one tap away.
+    // currentVault); the picker is one tap away.
     showLock("unlock");
     prefillFromHash(false); // strip a fragment that didn't parse
   }
@@ -930,12 +930,11 @@
       // The vault now exists: register it so the picker and the next launch
       // know it (the connect screen deliberately selects without registering).
       if (window.Sync) Sync.addVault(Sync.getVaultId());
-      // Adopt the vault name: labels the installed app icon + lock screen (App)
-      // and stores it as an encrypted, synced setting (Vault) so other devices
-      // inherit it. Applied before the welcome step so the install button there
-      // already advertises the chosen name in the manifest.
+      // Adopt the vault name: labels the lock screen, picker and page title
+      // (App) and stores it as an encrypted, synced setting (Vault) so other
+      // devices inherit it. The installed app is named "Own Vault" regardless.
       if (name) persistVaultName(name);
-      else if (window.App) App.refreshVaultUI(); // manifest gets the new id
+      else if (window.App) App.refreshVaultUI(); // title gets the new vault
       // Show the welcome step: it surfaces the Vault ID (sync vaults only, so
       // other devices can connect — offline vaults have no server yet, and it's
       // always in Settings later) and offers to install the app.
@@ -2396,8 +2395,13 @@
       message:
         "This vault is deleted from this browser only" +
         (last ? "" : " — other vaults on this device are untouched") +
-        ". Unsynced changes are lost for good. The app icon stays until " +
-        "you remove it from your browser or home screen.",
+        ". Unsynced changes are lost for good." +
+        // One icon serves every vault, so it is only dead weight once the
+        // last vault goes.
+        (last
+          ? " The app icon stays until you remove it from your browser or " +
+            "home screen."
+          : ""),
       confirmText: "Remove",
       danger: true
     }).then(function (ok) {
@@ -2503,8 +2507,7 @@
       persistVaultName(byId("vault-name").value.trim());
       settingsMsg(
         "vault-name-msg",
-        "Saved and synced to your other devices. An already-installed app keeps " +
-          "its old icon name until you reinstall it.",
+        "Saved and synced to your other devices.",
         false
       );
       return;

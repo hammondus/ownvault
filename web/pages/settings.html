@@ -45,10 +45,10 @@
 
   <div class="card">
     <h2 class="card-title">Vault name</h2>
-    <p class="card-note">A short label for this vault (e.g. Home, Work). It names
-      the installed app icon and labels this vault on the lock screen and in the
-      vault picker. Encrypted and synced, so your other devices inherit it — the
-      server never sees it.</p>
+    <p class="card-note">A short label for this vault (e.g. Home, Work). It
+      labels this vault on the lock screen, in the vault picker, and in the page
+      title. The installed app is always called Own Vault. Encrypted and synced,
+      so your other devices inherit it — the server never sees it.</p>
     <div class="sync-row">
       <input id="vault-name" class="form-input" type="text" maxlength="30"
              placeholder="e.g. Home" autocomplete="off" autocapitalize="words">
@@ -228,9 +228,9 @@
       the browser to a first-run state. Only this device is affected — the
       server's copy and your other devices keep everything.</p>
     <p class="card-note card-warn">⚠️ If this vault doesn't sync, or has unsynced
-      changes, they are gone for good — sync or export a backup first. The
-      installed app icon can't remove itself; delete it from your browser or
-      home screen afterwards.</p>
+      changes, they are gone for good — sync or export a backup first. One
+      installed app icon serves every vault, so it stays put; after you remove
+      the last vault, delete the icon from your browser or home screen.</p>
     <button id="wipe-device" class="btn btn-danger" type="button">Remove vault from this device…</button>
   </div>
 </section>

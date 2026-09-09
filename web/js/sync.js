@@ -627,9 +627,9 @@ window.Sync = (function () {
   // Point this tab at the last-used vault (or the first known one if that
   // record is stale). Read-only: currentVault is only WRITTEN by an explicit
   // selection, so a mere page load never steals "last used" from another
-  // tab. app.js may override this from an installed icon's ?vault= parameter
-  // before anything opens a database. This same block is what reopens the
-  // extension's single vault after a browser restart.
+  // tab. This same block is what reopens the extension's single vault after a
+  // browser restart, and what decides which vault the one installed app opens
+  // on.
   (function () {
     var ids = listVaults();
     if (!ids.length) return;

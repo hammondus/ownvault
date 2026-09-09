@@ -542,8 +542,10 @@ Four calls in the conversion are worth recording.
 
 **The nitrokit defaults for CSP and Permissions-Policy are both wrong here, so
 both are passed explicitly.** `nitrokit.DefaultCSP` has no `'wasm-unsafe-eval'`
-and no `blob:` sources, which would block the Argon2id WASM module, the
-client-generated manifest, and the setup-code QR.
+and no `blob:` sources, which would block the Argon2id WASM module and the
+setup-code QR. (It also carried `manifest-src 'self' blob:` for the
+client-generated per-vault manifest; that manifest is gone and the allowance
+went with it.)
 `nitrokit.DefaultPermissionsPolicy` denies `camera` outright, which would kill
 the in-page QR scanner. The CSP string is carried over byte for byte;
 `camera=(self)` is the only widening of the permissions default. This is the
@@ -853,16 +855,18 @@ Consequences worth knowing:
   precisely so enabling sync later would work), so the first sync claims it
   by TOFU and the vault is protected without the user doing anything.
 
-## Page title: no vault name in an installed window (2026-08)
+## Page title: no vault name in an installed window (2026-08, reversed 2026-09)
 
-`document.title` is `"<screen> - <vault name>"` — "Passwords - Home". In an
-installed PWA window, the browser prepends the manifest name to the document
-title, so the window read "Home - Passwords - Home".
+**Superseded by "One installed app, not one per vault" below.** The manifest no
+longer carries the vault name, so the duplication this avoided cannot happen,
+and the title is now the only thing naming the open vault in an installed
+window. `syncUI` appends the name in every display mode.
 
-The shell now appends the vault name only when NOT running installed
-(`App.isStandalone()`). A browser tab keeps "Passwords - Home", because there
-the title is the only thing distinguishing one vault's tab from another's; an
-installed window gets a plain "Passwords" and the browser supplies the name.
+The original reasoning, for the record: `document.title` is
+`"<screen> - <vault name>"` — "Passwords - Home". In an installed PWA window the
+browser prepends the manifest name to the document title, so the window read
+"Home - Passwords - Home". The shell therefore appended the vault name only when
+NOT running installed (`App.isStandalone()`).
 
 `isStandalone()` moved from vaultui.js to app.js and is exported on `window.App`
 — the shell owns the manifest, the title, and now the one definition of
@@ -894,15 +898,12 @@ against the same server or different ones). The layout:
   never fight over it — the last switch merely decides what a plain `/`
   visit unlocks next. `Sync.getVaultId()` delegates to `Vault.getActiveId()`;
   there is no separate stored id to drift.
-- **Each vault installs as its own app.** The client-generated manifest's
-  `id` and `start_url` are `origin/?vault=<id>` (scope stays `/`), so
-  installing vault B doesn't replace vault A's icon, and each icon launches
-  into its own vault (app.js adopts the `?vault=` parameter, then strips it
-  with `replaceState`, like the setup-code fragment). Renaming still
-  relabels the same app: the id is constant per vault. The service worker
-  needed nothing: every navigation already collapses to the one cached
-  shell, and the query parameter survives in `location` for app.js to read
-  offline.
+- **One installed app for every vault.** Originally each vault got its own
+  client-generated manifest (`id`/`start_url` `origin/?vault=<id>`, scope
+  `/`) so it would install as its own icon. That never worked past the first
+  vault — see "One installed app, not one per vault" below — and was removed
+  in 2026-09. The app installs once, as "Own Vault", and opens whichever
+  vault `currentVault` names; the picker switches.
 - **Registration is separate from selection.** Connect *selects* a vault id
   (so its token lands under the right key and the probe pulls its
   namespace) but only *registers* it after the server confirms the vault
@@ -1441,3 +1442,59 @@ been dealt with instead of wondering where it went.
 separate Go module, on purpose, so the vault server never depends on
 `mailer`. Sharing forty lines is not worth collapsing that boundary.
 
+
+## One installed app, not one per vault (2026-09)
+
+The installed app is always called **Own Vault**. The vault name ("Home",
+"Work") labels the lock screen, the picker, Settings, and `document.title` —
+never the icon.
+
+Before this, `app.js` built a per-vault manifest at runtime: a `blob:` URL whose
+`name` was the vault name and whose `id`/`start_url` were `origin/?vault=<id>`,
+swapped into `<link rel="manifest">` on load and on every vault switch. The
+intent was one icon per vault, each launching into its own vault. Two things
+were wrong with it.
+
+**It named the app after a vault.** An icon reading "Home" does not say what the
+application is, which is what a user actually needs from a dock or a Home
+Screen. That was the reported complaint, and on its own it justifies the change.
+
+**Per-vault icons never worked past the first vault.** Every generated manifest
+declared `scope: "/"`, because *manifest scope is path-based and a query string
+is not part of it* — `?vault=<id>` can distinguish `id` and `start_url` but not
+scope. Chrome therefore saw two apps claiming one scope, and once an app was
+installed at `/` it stopped offering installs for anything in that scope.
+Measured on Chrome 152/macOS: an origin with nothing installed fires
+`beforeinstallprompt` again after a runtime manifest swap to a new `id`, while
+an origin with an app already installed at `/` fires nothing at all — same code,
+same swap. So the second vault could never be installed, and the feature the
+blob manifest existed to provide was unreachable.
+
+Two smaller faults fell out with it. `updateInstallUI` decided "installed" from
+`App.isStandalone()`, a display-mode check that answers *"am I in some installed
+window of this origin?"*, not *"is this vault installed?"* — inside the one
+installed app every vault reported installed. And the Settings confirmation is
+the literal "✓ Own Vault is installed on this device", which could never name a
+vault. Both are simply correct now: with one app per origin, display mode *is*
+install state, and the app really is called Own Vault.
+
+What replaced it: the static `web/manifest.webmanifest` that was always the
+fallback, plus a pinned `<meta name="apple-mobile-web-app-title"
+content="Own Vault">` in the shell, because iOS ignores the manifest when naming
+a Home Screen icon and would otherwise take the per-screen `<title>`. Deleted:
+`setBlobManifest`, `applyPwaName`, `setAppleTitle`, `manifestBlobUrl`, and the
+`?vault=` launch-parameter adoption — about 95 lines of `app.js`.
+
+Rejected alternative: give each vault its own **path** (`/v/<id>/`) so the
+scopes genuinely differ. It would probably work — the server already serves the
+shell for any non-file path — but it buys an icon per vault at the cost of
+routing changes across `app.js`, `start_url`, setup links, and the service
+worker, plus per-vault install state that no API can query (`blob:` manifests
+have no stable URL for `getInstalledRelatedApps`, so it would have to be
+recorded on `appinstalled` and would drift when someone uninstalls from the OS).
+One icon plus the in-app picker is what this app wants.
+
+Consequence to remember: the zero-knowledge argument for a client-generated
+manifest is now moot, because no vault name reaches the manifest at all. If a
+per-vault app name is ever wanted again, it needs paths, not query strings — and
+the same rule stands that the name must never be rendered server-side.

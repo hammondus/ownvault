@@ -180,9 +180,9 @@ Server hardening (in `main.go` — keep these when touching handlers):
 
 - Every response carries a strict CSP (`script-src 'self' 'wasm-unsafe-eval'`
   — the wasm allowance admits only WebAssembly compilation for the Argon2id
-  module, never JS eval; no inline scripts;
-  `manifest-src 'self' blob:` for the client-generated manifest) plus nosniff,
-  `Referrer-Policy: same-origin`, and a Permissions-Policy that allows only
+  module, never JS eval; no inline scripts; `manifest-src 'self'`, the manifest
+  being a static file; `img-src 'self' blob:` for the setup-code QR) plus
+  nosniff, `Referrer-Policy: same-origin`, and a Permissions-Policy that allows only
   same-origin camera (the in-page QR scanner). The CSP and the policy are both
   passed to `SecureHeaders` explicitly — its defaults would block the WASM
   module and the camera. `frame-ancestors 'none'` in the CSP is what denies
@@ -393,9 +393,11 @@ Supporting flows the above depends on:
   themed `confirmDialog()` in vaultui.js, never `window.confirm`.
 - **Auto-lock**: the vault re-locks after a period of inactivity and via an
   explicit lock button, requiring the master password again.
-- **Vault name (PWA icon name)**: the create screen prompts for a short name
-  ("Home", "Work"); it labels the installed app icon and the lock screen. It is
-  a **property of the vault, synced end-to-end**: stored as a reserved encrypted
+- **Vault name**: the create screen prompts for a short name ("Home", "Work");
+  it labels the lock screen, the vault picker, Settings, and `document.title`.
+  It deliberately does **not** name the installed app — see "One installed app,
+  not one per vault" below. It is a **property of the vault, synced
+  end-to-end**: stored as a reserved encrypted
   entry (`vault.js` `SETTINGS_ID = "__vault__"`, payload `{name}`) that rides the
   normal per-entry sync — deliberately NOT the wrapped-key meta doc, whose server
   write is last-writer-wins and could clobber a password change. So a device that
@@ -407,25 +409,31 @@ Supporting flows the above depends on:
   older/single-device vaults migrate automatically. The name is hidden from the
   list/search/count and never raises a sync conflict (name-vs-name auto-merges
   last-writer-wins in `applyPulled`). Two layers hold it: `vault.js` (the synced
-  encrypted copy) and `web/js/app.js` — the shell, which owns the `<link
-  rel="manifest">` + `<title>` and keeps a local `localStorage vaultName:<id>`
-  mirror per vault for use before unlock (the lock screen and picker label
-  vaults from it; the manifest is set on every load). app.js drives the
-  installed-app name via a **client-generated manifest** (a `blob:` URL with the
-  name baked in) so the name never reaches the server — preserving zero-knowledge
-  even on shared/public servers. (There is deliberately no server-side manifest
-  naming: it would be the one path leaking the plaintext name to the server.)
-  Icon URLs in that manifest must be absolute (a blob URL has no base); its
-  `id`/`start_url` are constant *per vault* (`origin/?vault=<id>`) so a rename
-  relabels the *same* app instead of installing a duplicate, while each vault
-  installs as its own app whose icon launches into its own vault (app.js adopts
-  the `?vault=` parameter at load, then strips it via `replaceState`). If a
-  browser rejects a blob manifest, it falls back to
-  the static `manifest.webmanifest` (default name) — the user renames the icon
-  once. iOS ignores the manifest for naming, so app.js also sets an
-  `apple-mobile-web-app-title` meta from the name (the Add-to-Home-Screen sheet
-  is user-editable regardless). An already-installed app keeps its old icon name
-  until reinstalled.
+  encrypted copy) and `web/js/app.js` — the shell, which owns `<title>` and keeps
+  a local `localStorage vaultName:<id>` mirror per vault for use before unlock
+  (the lock screen and picker label vaults from it).
+
+- **One installed app, not one per vault**: the app is always "Own Vault". It
+  ships a single static `web/manifest.webmanifest` (`id`/`start_url` `/`), and
+  the shell pins `<meta name="apple-mobile-web-app-title" content="Own Vault">`
+  for iOS, which ignores the manifest when naming a Home Screen icon and would
+  otherwise fall back to the per-screen `<title>`. One icon holds every vault;
+  the vault it opens is `currentVault`, and the in-app picker switches. Because
+  no vault name reaches the manifest, zero-knowledge needs no defending here:
+  there is nothing vault-specific to keep off the server.
+
+  The earlier design gave each vault a **client-generated blob manifest**
+  (`id`/`start_url` `origin/?vault=<id>`, name = the vault name) so each vault
+  installed as its own icon. It never worked past the first vault. Every vault
+  declared `scope: "/"`, and manifest scope is path-based — a query string is
+  not part of it — so Chrome saw two apps claiming one scope and refused to
+  offer the second install. Measured on Chrome 152/macOS: a clean origin fires
+  `beforeinstallprompt` on a runtime manifest swap, an origin with an app
+  already installed at `/` fires nothing. Per-vault icons would need per-vault
+  *paths* (`/v/<id>/`); that was considered and rejected — one icon plus the
+  picker is what the app wants. Do not reintroduce a blob manifest, the
+  `?vault=` launch parameter, or a vault name in the installed app's title.
+  `document.title` carries the vault name instead, in every display mode.
 
 
 # Browser extension

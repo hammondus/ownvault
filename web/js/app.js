@@ -37,17 +37,16 @@
   applyScheme(savedScheme());
 
   /* ==================== PWA / vault name ==================== */
-  // A short nickname per vault ("Home", "Work"). It labels the installed app
-  // icon, the lock screen, and the vault picker. This is the plaintext
-  // on-device mirror of the vault's encrypted name — never sent to a sync
-  // server, so the zero-knowledge property holds even on a shared public
-  // server. One hostname can hold several vaults, so the key is suffixed per
-  // vault; re-applying the active vault's name on every load sidesteps the
-  // timing quirk where the browser captures the manifest name before the
-  // user has typed one.
+  // A short nickname per vault ("Home", "Work"). It labels the lock screen,
+  // the vault picker, Settings, and the page title. It deliberately does NOT
+  // name the installed app: the app is always "Own Vault", one icon holding
+  // every vault (DESIGN-DECISIONS.md "One installed app, not one per vault").
+  // This is the plaintext on-device mirror of the vault's encrypted name —
+  // never sent to a sync server, so the zero-knowledge property holds even on
+  // a shared public server. One hostname can hold several vaults, so the key
+  // is suffixed per vault.
 
   var VAULT_NAME_KEY = "vaultName";
-  var manifestBlobUrl = null;
 
   function nameKey(id) {
     return VAULT_NAME_KEY + ":" + id;
@@ -81,102 +80,6 @@
       window.navigator.standalone === true
     );
   }
-
-  function setAppleTitle(value) {
-    // iOS ignores the manifest for naming; the home-screen title comes from this
-    // meta (falling back to <title>). Create it lazily — index.html doesn't ship
-    // one so the default install stays "Own Vault".
-    var m = document.querySelector('meta[name="apple-mobile-web-app-title"]');
-    if (!m) {
-      m = document.createElement("meta");
-      m.setAttribute("name", "apple-mobile-web-app-title");
-      document.head.appendChild(m);
-    }
-    m.setAttribute("content", value);
-  }
-
-  // Option A: point <link rel="manifest"> at a client-generated manifest that
-  // carries the vault name. The name never leaves the device. Icons/URLs must be
-  // ABSOLUTE — a blob: URL has no useful base to resolve "/icons/..." against.
-  // id + start_url are constant PER VAULT: a rename still relabels the same
-  // app (no duplicate install), while each vault installs as its own app,
-  // launching at /?vault=<id> so the icon reopens the right vault.
-  function setBlobManifest(link, name) {
-    var origin = location.origin;
-    var vaultUrl =
-      origin +
-      "/?vault=" +
-      encodeURIComponent(window.Sync ? Sync.getVaultId() : "");
-    var manifest = {
-      id: vaultUrl,
-      name: name,
-      short_name: name,
-      description:
-        "Own Vault: an offline-first, end-to-end encrypted secrets manager.",
-      start_url: vaultUrl,
-      scope: origin + "/",
-      display: "standalone",
-      background_color: "#f4f6f8",
-      theme_color: SCHEMES[savedScheme()],
-      icons: [
-        { src: origin + "/icons/lock.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
-        { src: origin + "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
-        { src: origin + "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
-        { src: origin + "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
-      ]
-    };
-    try {
-      var blob = new Blob([JSON.stringify(manifest)], {
-        type: "application/manifest+json"
-      });
-      var url = URL.createObjectURL(blob);
-      if (manifestBlobUrl) URL.revokeObjectURL(manifestBlobUrl);
-      manifestBlobUrl = url;
-      link.href = url;
-    } catch (e) {
-      // Blob manifest unsupported: leave the static manifest (default name).
-    }
-  }
-
-  // Reflect the vault name in the installed-app name (manifest) and the iOS
-  // home-screen title. Called at startup and whenever the name changes. The
-  // manifest is generated entirely client-side (a blob: URL) so the name never
-  // reaches the server — keeping zero-knowledge on shared/public servers.
-  function applyPwaName() {
-    var name = getVaultName();
-    setAppleTitle(name || "Own Vault");
-    var link = document.querySelector('link[rel="manifest"]');
-    var vid = window.Sync ? Sync.getVaultId() : "";
-    if (!link || !vid) return; // no vault yet -> keep the static manifest
-    // Even an unnamed vault gets the blob manifest: two vaults must carry
-    // distinct manifest ids or installing the second replaces the first.
-    setBlobManifest(link, name || "Own Vault");
-  }
-
-  // An installed vault icon launches at /?vault=<id> (its manifest's
-  // start_url). Adopt that vault for this tab, then strip the parameter —
-  // like the setup-code fragment, it must not linger in the URL or the
-  // history entry. An id not on this device (an icon outliving a removed
-  // vault) is ignored and the tab stays on the last-used vault. Runs before
-  // applyPwaName so the manifest reflects the launched vault.
-  (function () {
-    var m = /[?&]vault=([^&]+)/.exec(location.search);
-    if (!m) return;
-    var id = "";
-    try {
-      id = decodeURIComponent(m[1]);
-    } catch (e) {
-      /* malformed escape: treat as unknown */
-    }
-    if (id && window.Sync && Sync.listVaults().indexOf(id) >= 0) {
-      Sync.selectVault(id);
-    }
-    if (window.history && history.replaceState) {
-      history.replaceState(null, "", location.pathname + location.hash);
-    }
-  })();
-
-  applyPwaName();
 
   var btn = document.getElementById("menu-btn");
   var nav = document.getElementById("nav");
@@ -292,12 +195,14 @@
     navLinks.forEach(function (a) {
       a.classList.toggle("active", a === link);
     });
-    // In a tab the vault name is the only thing telling one vault's tab from
-    // another's, so it belongs in the title. An installed window already shows
-    // the manifest name in its own chrome and the browser prepends it to
-    // document.title, so appending it there reads "Home - Passwords - Home".
-    var name = isStandalone() ? "" : getVaultName() || "Own Vault";
-    document.title = name ? link.dataset.title + " - " + name : link.dataset.title;
+    // The vault name belongs in the title everywhere. In a tab it is the only
+    // thing telling one vault's tab from another's; in an installed window the
+    // app is generically named "Own Vault", so the title is the only thing
+    // naming the vault that is open. (It used to be dropped when installed,
+    // back when the manifest carried the vault name and the window read
+    // "Home - Passwords - Home".)
+    var name = getVaultName() || "Own Vault";
+    document.title = link.dataset.title + " - " + name;
   }
 
   // The drawer slides closed while the new content swaps in underneath —
@@ -727,13 +632,11 @@
           localStorage.setItem(nameKey(id), name || "");
         } catch (e) { /* ignore */ }
       }
-      applyPwaName();
       syncUI(); // refresh the tab-title suffix immediately
     },
-    // After a vault switch: re-point the manifest and title at the newly
-    // active vault (vaultui calls this alongside Sync.selectVault).
+    // After a vault switch: re-point the page title at the newly active
+    // vault (vaultui calls this alongside Sync.selectVault).
     refreshVaultUI: function () {
-      applyPwaName();
       syncUI();
     }
   };

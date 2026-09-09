@@ -73,13 +73,14 @@ const (
 	// scripts and styles are same-origin files (no inline, no eval — htmx 2
 	// works without it). 'wasm-unsafe-eval' admits ONLY WebAssembly
 	// compilation (the Argon2id KDF module), not JS eval, so the
-	// string-to-code paths stay blocked. blob: appears twice: manifest-src for
-	// the client-generated manifest carrying the vault name (see app.js), and
-	// img-src for the setup-code QR, which arrives as an authenticated fetch
-	// and is shown via an object URL (a plain <img src> can't carry the auth
-	// header).
+	// string-to-code paths stay blocked. blob: appears once, in img-src, for
+	// the setup-code QR, which arrives as an authenticated fetch and is shown
+	// via an object URL (a plain <img src> can't carry the auth header). The
+	// manifest is the static file, so manifest-src needs no blob: — the app
+	// dropped its client-generated per-vault manifest (DESIGN-DECISIONS.md
+	// "One installed app, not one per vault").
 	vaultCSP = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob:; " +
-		"connect-src 'self'; manifest-src 'self' blob:; worker-src 'self'; " +
+		"connect-src 'self'; manifest-src 'self'; worker-src 'self'; " +
 		"object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 	// nitrokit's default denies camera outright, which would break the in-page
