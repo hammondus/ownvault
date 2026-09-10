@@ -1,7 +1,7 @@
 github.com/hammondus/mailer v0.1.1 h1:ZF9Wnxkaa0IGIi9qzpWgOjOGnqT3+YRQ1LNUCl8vg1o=
 github.com/hammondus/mailer v0.1.1/go.mod h1:IMRU+kk0qkpVIWSnhQdcl+q3MlazlHdMgcWP0c4AMJQ=
-github.com/hammondus/nitrokit v0.2.0 h1://KASLYqb6woCGVCekCV9xT6zvHoV0ju2l8UTPZj2xw=
-github.com/hammondus/nitrokit v0.2.0/go.mod h1:oIBBtmwZxIfW7NdnXy4K48RExKgT2GqQeYEooSmwutk=
+github.com/hammondus/nitrokit v0.3.0 h1:LUbWW9+qL0oqx2KoyX4ZIa3WYhG1dScOPop6byHNKsI=
+github.com/hammondus/nitrokit v0.3.0/go.mod h1:oIBBtmwZxIfW7NdnXy4K48RExKgT2GqQeYEooSmwutk=
 golang.org/x/crypto v0.55.0 h1:+KWHjbgOaAQ66dh/YlkZKHlz9ZUlq61AFirAR9ntP8M=
 golang.org/x/crypto v0.55.0/go.mod h1:uq0V9dE/fzQuJtbnL+2EhWOE63vo164FY8xqEnV9xis=
 golang.org/x/net v0.57.0 h1:K5+3DljvIuDG9/Jv9rvyMywYNFCQ9RSUY6OOTTkT+tE=

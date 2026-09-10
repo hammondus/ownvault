@@ -3,7 +3,7 @@ module github.com/hammondus/ownvault
 go 1.26.5
 
 require (
-	github.com/hammondus/nitrokit v0.2.0
+	github.com/hammondus/nitrokit v0.3.0
 	modernc.org/sqlite v1.53.0
 	rsc.io/qr v0.2.0
 )
