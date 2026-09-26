@@ -756,6 +756,12 @@
 
   function afterUnlock() {
     hideLock();
+    // Land in the search box, so the first keystroke after the password
+    // starts filtering. Absent when the unlock happens on another screen.
+    // Mouse and trackpad devices only: on a touch screen, focus can raise the
+    // on-screen keyboard over the list the user unlocked to see.
+    var search = byId("pw-search");
+    if (search && window.matchMedia("(pointer: fine)").matches) search.focus();
     resetIdle();
     loadEntries();
     if (window.Sync) Sync.start();
