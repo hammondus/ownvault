@@ -1562,3 +1562,23 @@ the shell's HTML. Verified offline with the server stopped: all nine scripts
 served from cache, CSS applied, lock gate rendered, `/settings` served the cached
 shell. Keep `PRECACHE` entries unversioned — they only ever match because of that
 flag.
+
+## Context menu suppressed in the installed app, except where you edit (2026-09)
+
+In an installed window, `app.js` cancels `contextmenu` so a right-click does
+not open the browser's page menu (Back, Reload, Inspect, Save as). In a browser
+tab the menu is untouched: there it belongs to the browser, not the app.
+
+**Inputs, textareas, and selected text keep the menu.** Every secret field is a
+`type="text"` `.masked` input, and right-click **Paste** is the ordinary way to
+put a value from another password manager, or a setup code, into one. A blanket
+block would also remove spellcheck and emoji entry. The exemptions are what
+make the change acceptable; do not tighten it to the whole document.
+
+**Cosmetic, not a security control.** Every suppressed item is still reachable
+from the keyboard (⌘R, ⌘[, ⌥⌘I), and Firefox lets Shift+right-click override
+`preventDefault`. Do not list it among the hardening rules.
+
+**The standalone check runs per event**, not once at startup, because the
+display mode can change while the window is open (window-controls-overlay
+toggles it).

@@ -179,6 +179,21 @@
     if (e.key === "Escape" && isNavOpen() && !isPinned()) closeNav();
   });
 
+  // Installed app only: suppress the browser's page menu (Back, Reload,
+  // Inspect, Save as) so the window reads as an app. Editable fields and
+  // selected text keep theirs, because that menu is how you paste into a
+  // masked field. Cosmetic, not a security control: every item stays
+  // reachable from the keyboard. isStandalone() runs per event because the
+  // display mode can change while the window is open.
+  document.addEventListener("contextmenu", function (e) {
+    if (!isStandalone()) return;
+    var t = e.target;
+    if (t.closest && t.closest("input, textarea, [contenteditable]")) return;
+    var sel = window.getSelection && window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    e.preventDefault();
+  });
+
   /* ==================== Routing glue around htmx ==================== */
   // htmx does the fetching, swapping, and history. This glue closes the
   // drawer on navigation and keeps the title + active link in sync.
